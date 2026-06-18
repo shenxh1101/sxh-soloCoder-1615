@@ -13,6 +13,10 @@ import {
   DollarSign,
   Shield,
   MessageCircle,
+  X,
+  Check,
+  Star,
+  StarOff,
 } from "lucide-react";
 import type { RepairOrder } from "~shared/types";
 import { STATUS_LABELS, STATUS_COLORS, PAYMENT_METHOD_LABELS } from "~shared/types";
@@ -36,6 +40,10 @@ export default function Dashboard() {
   const [unpaidRepairs, setUnpaidRepairs] = useState<RepairOrder[]>([]);
   const [warrantyExpiring, setWarrantyExpiring] = useState<RepairOrder[]>([]);
   const [awaitingReturnVisit, setAwaitingReturnVisit] = useState<RepairOrder[]>([]);
+  const [returnVisitModal, setReturnVisitModal] = useState<{ repair: RepairOrder } | null>(null);
+  const [returnVisitContent, setReturnVisitContent] = useState("");
+  const [returnVisitSatisfaction, setReturnVisitSatisfaction] = useState<string>("");
+  const [warrantyContactedLoading, setWarrantyContactedLoading] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
@@ -64,6 +72,44 @@ export default function Dashboard() {
       setAwaitingReturnVisit(awaitingVisit);
     } catch (e) {
       console.error(e);
+    }
+  }
+
+  function openReturnVisit(repair: RepairOrder) {
+    setReturnVisitModal({ repair });
+    setReturnVisitContent("");
+    setReturnVisitSatisfaction("");
+  }
+
+  async function handleSubmitReturnVisit() {
+    if (!returnVisitModal) return;
+    if (!returnVisitContent.trim()) {
+      alert("请填写回访内容");
+      return;
+    }
+    try {
+      await repairsApi.returnVisit(
+        returnVisitModal.repair.id,
+        returnVisitContent.trim(),
+        returnVisitSatisfaction || undefined
+      );
+      setReturnVisitModal(null);
+      loadData();
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
+  async function handleWarrantyContacted(repairId: number) {
+    if (!confirm("确定记录已联系客户？")) return;
+    setWarrantyContactedLoading(repairId);
+    try {
+      await repairsApi.warrantyContacted(repairId, "已联系客户提醒保修到期");
+      loadData();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setWarrantyContactedLoading(null);
     }
   }
 
@@ -262,7 +308,7 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                       <div className="text-right">
                         <div className="text-sm font-bold text-purple-700">
                           {repair.warrantyExpires ? `到期日：${formatDate(repair.warrantyExpires)}` : ""}
@@ -273,8 +319,16 @@ export default function Dashboard() {
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
                       >
                         <Phone className="w-3.5 h-3.5" />
-                        联系客户
+                        电话联系
                       </a>
+                      <button
+                        onClick={() => handleWarrantyContacted(repair.id)}
+                        disabled={warrantyContactedLoading === repair.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-purple-700 text-sm rounded-lg border border-purple-300 hover:bg-purple-50 transition-colors disabled:opacity-50"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        {warrantyContactedLoading === repair.id ? "记录中..." : "已联系"}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -315,13 +369,13 @@ export default function Dashboard() {
                       <div className="text-right text-sm text-teal-700">
                         {repair.completedAt ? `完成于 ${formatDate(repair.completedAt)}` : ""}
                       </div>
-                      <Link
-                        to={`/repairs/${repair.id}`}
+                      <button
+                        onClick={() => openReturnVisit(repair)}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700 transition-colors"
                       >
                         <MessageCircle className="w-3.5 h-3.5" />
                         新增回访
-                      </Link>
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -444,6 +498,79 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {returnVisitModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-900">售后回访 - {returnVisitModal.repair.customerName || returnVisitModal.repair.customerPhone}</h3>
+              <button
+                onClick={() => setReturnVisitModal(null)}
+                className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-teal-50 rounded-lg p-4">
+                <div className="text-sm text-teal-700">
+                  <div className="font-medium mb-1">设备信息</div>
+                  <div>{returnVisitModal.repair.deviceType} · {returnVisitModal.repair.deviceModel}</div>
+                  <div className="text-xs text-teal-600 mt-1">
+                    故障：{returnVisitModal.repair.faultDescription}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="label">满意度评价</label>
+                <div className="flex gap-2">
+                  {["非常满意", "满意", "一般", "不满意"].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setReturnVisitSatisfaction(s)}
+                      className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        returnVisitSatisfaction === s
+                          ? "bg-teal-600 text-white"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      {s === "非常满意" || s === "满意" ? (
+                        <Star className="w-4 h-4 fill-current" />
+                      ) : (
+                        <StarOff className="w-4 h-4" />
+                      )}
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="label">回访内容 *</label>
+                <textarea
+                  value={returnVisitContent}
+                  onChange={(e) => setReturnVisitContent(e.target.value)}
+                  className="input min-h-[100px]"
+                  placeholder="请记录回访情况，如：设备使用正常、客户满意、有小问题已指导解决等"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
+              <button
+                onClick={() => setReturnVisitModal(null)}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSubmitReturnVisit}
+                className="btn-primary"
+              >
+                保存回访
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

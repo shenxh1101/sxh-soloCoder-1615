@@ -16,6 +16,7 @@ import repairRoutes from './routes/repairs.js'
 import partRoutes from './routes/parts.js'
 import purchaseRoutes from './routes/purchases.js'
 import supplierRoutes from './routes/suppliers.js'
+import financialRoutes from './routes/financial.js'
 import statisticsRoutes from './routes/statistics.js'
 import './db.js'
 
@@ -42,6 +43,7 @@ app.use('/api/repairs', repairRoutes)
 app.use('/api/parts', partRoutes)
 app.use('/api/purchases', purchaseRoutes)
 app.use('/api/suppliers', supplierRoutes)
+app.use('/api/financial', financialRoutes)
 app.use('/api/statistics', statisticsRoutes)
 
 /**

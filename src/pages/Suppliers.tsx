@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Phone, User, FileText, Edit2, Trash2, Users, ShoppingCart, ChevronRight, CheckCircle, DollarSign } from "lucide-react";
+import { Plus, Phone, User, FileText, Edit2, Trash2, Users, ShoppingCart, ChevronRight, CheckCircle, DollarSign, TrendingUp, CreditCard, AlertCircle } from "lucide-react";
 import type { Supplier, PurchaseOrder } from "~shared/types";
-import { PURCHASE_STATUS_LABELS, PURCHASE_STATUS_COLORS } from "~shared/types";
+import { PURCHASE_STATUS_LABELS, PURCHASE_STATUS_COLORS, PAYMENT_METHOD_LABELS } from "~shared/types";
 import { suppliersApi } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
@@ -102,6 +102,11 @@ export default function Suppliers() {
   }
 
   const totalPurchaseAmount = viewingSupplier?.purchases.reduce((sum, p) => sum + Number(p.totalAmount), 0) || 0;
+  const totalPaidAmount = viewingSupplier?.purchases.reduce((sum, p) => {
+    const paid = p.payments?.reduce((s, pm) => s + Number(pm.amount), 0) || 0;
+    return sum + paid;
+  }, 0) || 0;
+  const totalUnpaidAmount = totalPurchaseAmount - totalPaidAmount;
 
   return (
     <div className="space-y-6">
@@ -199,6 +204,43 @@ export default function Suppliers() {
           >
             ← 返回供应商列表
           </button>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div className="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
+                  <TrendingUp className="w-6 h-6 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-blue-600">总采购额</p>
+                  <p className="text-2xl font-bold text-blue-900 mt-0.5">{formatCurrency(totalPurchaseAmount)}</p>
+                </div>
+              </div>
+            </div>
+            <div className="card p-5 bg-gradient-to-br from-green-50 to-emerald-50">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center">
+                  <CreditCard className="w-6 h-6 text-green-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-green-600">已付金额</p>
+                  <p className="text-2xl font-bold text-green-900 mt-0.5">{formatCurrency(totalPaidAmount)}</p>
+                </div>
+              </div>
+            </div>
+            <div className="card p-5 bg-gradient-to-br from-amber-50 to-orange-50">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center">
+                  <AlertCircle className="w-6 h-6 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-amber-600">未付金额</p>
+                  <p className="text-2xl font-bold text-amber-900 mt-0.5">{formatCurrency(totalUnpaidAmount)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="card p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -209,9 +251,8 @@ export default function Suppliers() {
                   {viewingSupplier.supplier.contactPhone}
                 </p>
               </div>
-              <div className="text-right">
-                <div className="text-sm text-gray-500">累计采购</div>
-                <div className="text-xl font-bold text-gray-900">{formatCurrency(totalPurchaseAmount)}</div>
+              <div className="text-right text-sm text-gray-500">
+                共 {viewingSupplier.purchases.length} 条采购记录
               </div>
             </div>
             {viewingSupplier.purchases.length === 0 ? (
@@ -219,19 +260,25 @@ export default function Suppliers() {
                 暂无采购记录
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {viewingSupplier.purchases.map((p) => {
                   const statusColor = PURCHASE_STATUS_COLORS[p.status];
                   const statusLabel = PURCHASE_STATUS_LABELS[p.status];
+                  const paid = p.payments?.reduce((s, pm) => s + Number(pm.amount), 0) || 0;
+                  const unpaid = Number(p.totalAmount) - paid;
                   return (
                     <div key={p.id} className="p-4 border border-gray-100 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-3">
                           <span className="font-medium">采购单 #{p.id}</span>
                           <span className={"badge " + statusColor}>{statusLabel}</span>
-                          {p.isPaid ? (
+                          {paid >= Number(p.totalAmount) && p.payments && p.payments.length > 0 ? (
                             <span className="badge bg-green-100 text-green-700 text-xs">
-                              <CheckCircle className="w-3 h-3 mr-0.5" />已付款
+                              <CheckCircle className="w-3 h-3 mr-0.5" />已付清
+                            </span>
+                          ) : paid > 0 ? (
+                            <span className="badge bg-amber-100 text-amber-700 text-xs">
+                              <DollarSign className="w-3 h-3 mr-0.5" />部分付款
                             </span>
                           ) : (
                             <span className="badge bg-red-100 text-red-700 text-xs">
@@ -239,13 +286,37 @@ export default function Suppliers() {
                             </span>
                           )}
                         </div>
-                        <div className="text-sm font-bold text-gray-900">{formatCurrency(p.totalAmount)}</div>
+                        <div className="text-right">
+                          <div className="text-sm font-bold text-gray-900">{formatCurrency(p.totalAmount)}</div>
+                          {paid > 0 && (
+                            <div className="text-xs text-gray-500">
+                              已付 {formatCurrency(paid)} / 待付 {formatCurrency(unpaid)}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500">
+                      <div className="text-xs text-gray-500 mb-3">
                         {formatDate(p.createdAt, "long")}
                         {p.remark && " - "}
                         {p.remark}
                       </div>
+                      {p.payments && p.payments.length > 0 && (
+                        <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                          <div className="text-xs font-medium text-gray-600">付款记录</div>
+                          {p.payments.map((pm) => (
+                            <div key={pm.id} className="flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 bg-white rounded border border-gray-200 text-gray-600">
+                                  {PAYMENT_METHOD_LABELS[pm.method]}
+                                </span>
+                                <span className="text-gray-500">{formatDate(pm.createdAt, "long")}</span>
+                                {pm.remark && <span className="text-gray-400">· {pm.remark}</span>}
+                              </div>
+                              <span className="font-medium text-green-600">-{formatCurrency(pm.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

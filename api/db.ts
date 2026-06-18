@@ -125,6 +125,31 @@ function initDatabase() {
       FOREIGN KEY (repairId) REFERENCES repair_orders(id)
     );
 
+    CREATE TABLE IF NOT EXISTS purchase_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      purchaseOrderId INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      method TEXT NOT NULL CHECK(method IN ('cash', 'wechat', 'alipay')),
+      remark TEXT,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (purchaseOrderId) REFERENCES purchase_orders(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS financial_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL CHECK(type IN ('repair_income', 'purchase_expense', 'manual_income', 'manual_expense')),
+      amount REAL NOT NULL,
+      method TEXT NOT NULL CHECK(method IN ('cash', 'wechat', 'alipay')),
+      repairId INTEGER,
+      purchaseOrderId INTEGER,
+      customerName TEXT,
+      supplierName TEXT,
+      remark TEXT,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (repairId) REFERENCES repair_orders(id),
+      FOREIGN KEY (purchaseOrderId) REFERENCES purchase_orders(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_repair_orders_status ON repair_orders(status);
     CREATE INDEX IF NOT EXISTS idx_repair_orders_phone ON repair_orders(customerPhone);
     CREATE INDEX IF NOT EXISTS idx_repair_parts_repair ON repair_parts(repairId);
@@ -135,6 +160,10 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status);
     CREATE INDEX IF NOT EXISTS idx_purchase_order_items_order ON purchase_order_items(purchaseOrderId);
     CREATE INDEX IF NOT EXISTS idx_repair_payments_repair ON repair_payments(repairId);
+    CREATE INDEX IF NOT EXISTS idx_purchase_payments_order ON purchase_payments(purchaseOrderId);
+    CREATE INDEX IF NOT EXISTS idx_financial_tx_created ON financial_transactions(createdAt);
+    CREATE INDEX IF NOT EXISTS idx_financial_tx_type ON financial_transactions(type);
+    CREATE INDEX IF NOT EXISTS idx_financial_tx_method ON financial_transactions(method);
   `);
 
   const colCheck = db.prepare("SELECT count(*) as cnt FROM pragma_table_info('repair_orders') WHERE name='paymentMethod'").get() as { cnt: number };
@@ -296,6 +325,42 @@ function initDatabase() {
       for (const i of data) insertPurchaseItem.run(...i);
     });
     tx6(purchaseItems);
+
+    const insertRepairPayment = db.prepare(
+      'INSERT INTO repair_payments (repairId, amount, method, remark, createdAt) VALUES (?, ?, ?, ?, ?)'
+    );
+    const repairPayments = [
+      [5, 230, 'wechat', '取件时微信支付', daysAgo(8)],
+    ];
+    const tx7 = db.transaction((data: unknown[][]) => {
+      for (const p of data) insertRepairPayment.run(...p);
+    });
+    tx7(repairPayments);
+
+    const insertPurchasePayment = db.prepare(
+      'INSERT INTO purchase_payments (purchaseOrderId, amount, method, remark, createdAt) VALUES (?, ?, ?, ?, ?)'
+    );
+    const purchasePayments = [
+      [1, 1760, 'alipay', '首次采购支付宝支付', daysAgo(9)],
+    ];
+    const tx8 = db.transaction((data: unknown[][]) => {
+      for (const p of data) insertPurchasePayment.run(...p);
+    });
+    tx8(purchasePayments);
+
+    const insertFinTx = db.prepare(
+      'INSERT INTO financial_transactions (type, amount, method, repairId, purchaseOrderId, customerName, supplierName, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    const finTxs = [
+      ['repair_income', 230, 'wechat', 5, null, '孙先生', null, '维修单#5 收款', daysAgo(8)],
+      ['purchase_expense', 1760, 'alipay', null, 1, null, '深圳电子批发商', '采购单#1 付款', daysAgo(9)],
+      ['manual_expense', 200, 'cash', null, null, null, null, '门店水电费', daysAgo(5)],
+      ['manual_income', 50, 'cash', null, null, null, null, '其他收入', daysAgo(3)],
+    ];
+    const tx9 = db.transaction((data: unknown[][]) => {
+      for (const t of data) insertFinTx.run(...t);
+    });
+    tx9(finTxs);
   }
 }
 

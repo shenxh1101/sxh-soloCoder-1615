@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, ShoppingCart, CheckCircle, XCircle, Search, Package, Truck, X, AlertTriangle, DollarSign, Users } from "lucide-react";
-import type { Part, PurchaseOrder, Supplier } from "~shared/types";
-import { PURCHASE_STATUS_LABELS, PURCHASE_STATUS_COLORS } from "~shared/types";
+import { Plus, ShoppingCart, CheckCircle, XCircle, Search, Package, Truck, X, AlertTriangle, DollarSign, Users, FileText } from "lucide-react";
+import type { Part, PurchaseOrder, Supplier, PaymentMethod, PurchasePayment } from "~shared/types";
+import { PURCHASE_STATUS_LABELS, PURCHASE_STATUS_COLORS, PAYMENT_METHOD_LABELS, PAYMENT_METHOD_COLORS } from "~shared/types";
 import { purchasesApi, partsApi, suppliersApi } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 type TabType = "list" | "create";
+
+const payMethodOptions: { value: PaymentMethod; label: string }[] = [
+  { value: "cash", label: "现金" },
+  { value: "wechat", label: "微信" },
+  { value: "alipay", label: "支付宝" },
+];
 
 export default function PurchaseOrders() {
   const [tab, setTab] = useState<TabType>("list");
@@ -18,6 +24,11 @@ export default function PurchaseOrders() {
   const [poRemark, setPoRemark] = useState("");
   const [selectedItems, setSelectedItems] = useState<{ partId: number; quantity: number; unitPrice: number }[]>([]);
   const [addPartId, setAddPartId] = useState<number | "">("");
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [payOrderId, setPayOrderId] = useState<number | null>(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
+  const [payRemark, setPayRemark] = useState("");
 
   useEffect(() => {
     loadData();
@@ -36,6 +47,15 @@ export default function PurchaseOrders() {
     } catch (e) {
       console.error(e);
     }
+  }
+
+  function getPaidAmount(order: PurchaseOrder): number {
+    const payments = order.payments || [];
+    return payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  }
+
+  function getUnpaidAmount(order: PurchaseOrder): number {
+    return Number(order.totalAmount) - getPaidAmount(order);
   }
 
   function addPartToOrder() {
@@ -110,10 +130,43 @@ export default function PurchaseOrders() {
     }
   }
 
-  async function handlePay(id: number) {
-    if (!confirm("确认标记该采购单为已付款？")) return;
+  function openPayModal(order: PurchaseOrder) {
+    const unpaid = getUnpaidAmount(order);
+    if (unpaid <= 0.001) {
+      alert("该采购单已全额付款");
+      return;
+    }
+    setPayOrderId(order.id);
+    setPayAmount(unpaid.toFixed(2));
+    setPayMethod("cash");
+    setPayRemark("");
+    setShowPayModal(true);
+  }
+
+  async function handleSubmitPayment() {
+    if (payOrderId === null) return;
+    const amt = Number(payAmount);
+    const order = orders.find((o) => o.id === payOrderId);
+    if (!order) return;
+    const unpaid = getUnpaidAmount(order);
+
+    if (!amt || amt <= 0) {
+      alert("付款金额必须大于 0");
+      return;
+    }
+    if (amt > unpaid + 0.001) {
+      alert(`付款金额不能超过剩余应付 ¥${unpaid.toFixed(2)}`);
+      return;
+    }
+    if (!payMethod || payMethod === "unpaid") {
+      alert("请选择付款方式");
+      return;
+    }
+
     try {
-      await purchasesApi.pay(id);
+      await purchasesApi.pay(payOrderId, amt, payMethod, payRemark || undefined);
+      setShowPayModal(false);
+      setPayOrderId(null);
       loadData();
     } catch (e: any) {
       alert(e.message);
@@ -133,6 +186,9 @@ export default function PurchaseOrders() {
   }
 
   const totalAmount = selectedItems.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
+  const payOrder = payOrderId !== null ? orders.find((o) => o.id === payOrderId) : null;
+  const payOrderUnpaid = payOrder ? getUnpaidAmount(payOrder) : 0;
+  const payOrderPaid = payOrder ? getPaidAmount(payOrder) : 0;
 
   const availablePartsForSelect = allParts.filter(
     (p) => !selectedItems.find((i) => i.partId === p.id)
@@ -169,112 +225,158 @@ export default function PurchaseOrders() {
               <p className="text-gray-500">暂无采购单</p>
             </div>
           ) : (
-            orders.map((order) => (
-              <div key={order.id} className="card p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-gray-900">采购单 #{order.id}</h3>
-                    <span className={`badge ${PURCHASE_STATUS_COLORS[order.status]}`}>
-                      {PURCHASE_STATUS_LABELS[order.status]}
-                    </span>
-                    {order.isPaid ? (
-                      <span className="badge bg-green-100 text-green-700">
-                        <CheckCircle className="w-3 h-3 mr-0.5" />
-                        已付款
+            orders.map((order) => {
+              const paid = getPaidAmount(order);
+              const unpaid = getUnpaidAmount(order);
+              const payments = (order.payments || []) as PurchasePayment[];
+              return (
+                <div key={order.id} className="card p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <h3 className="font-semibold text-gray-900">采购单 #{order.id}</h3>
+                      <span className={`badge ${PURCHASE_STATUS_COLORS[order.status]}`}>
+                        {PURCHASE_STATUS_LABELS[order.status]}
                       </span>
-                    ) : (
-                      <span className="badge bg-red-100 text-red-700">
-                        <DollarSign className="w-3 h-3 mr-0.5" />
-                        未付款
-                      </span>
+                      {order.isPaid ? (
+                        <span className="badge bg-green-100 text-green-700">
+                          <CheckCircle className="w-3 h-3 mr-0.5" />
+                          已付清
+                        </span>
+                      ) : paid > 0 ? (
+                        <span className="badge bg-amber-100 text-amber-700">
+                          <DollarSign className="w-3 h-3 mr-0.5" />
+                          部分付款
+                        </span>
+                      ) : (
+                        <span className="badge bg-red-100 text-red-700">
+                          <DollarSign className="w-3 h-3 mr-0.5" />
+                          未付款
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      创建时间：{formatDate(order.createdAt, "long")}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                    <div>
+                      <span className="text-gray-500">供应商：</span>
+                      <span className="text-gray-900 font-medium">{order.supplier}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">总金额：</span>
+                      <span className="text-gray-900 font-bold">{formatCurrency(order.totalAmount)}</span>
+                    </div>
+                    {paid > 0 && (
+                      <>
+                        <div>
+                          <span className="text-gray-500">已付款：</span>
+                          <span className="text-green-700 font-medium">{formatCurrency(paid)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">待付款：</span>
+                          <span className="text-red-600 font-medium">{formatCurrency(unpaid)}</span>
+                        </div>
+                      </>
+                    )}
+                    {order.remark && (
+                      <div className="col-span-2">
+                        <span className="text-gray-500">备注：</span>
+                        <span className="text-gray-700">{order.remark}</span>
+                      </div>
+                    )}
+                    {order.arrivedAt && (
+                      <div>
+                        <span className="text-gray-500">到货时间：</span>
+                        <span className="text-gray-900">{formatDate(order.arrivedAt, "long")}</span>
+                      </div>
+                    )}
+                    {order.paidAt && (
+                      <div>
+                        <span className="text-gray-500">付清时间：</span>
+                        <span className="text-gray-900">{formatDate(order.paidAt, "long")}</span>
+                      </div>
                     )}
                   </div>
-                  <div className="text-sm text-gray-500">
-                    创建时间：{formatDate(order.createdAt, "long")}
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                  <div>
-                    <span className="text-gray-500">供应商：</span>
-                    <span className="text-gray-900 font-medium">{order.supplier}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">总金额：</span>
-                    <span className="text-gray-900 font-bold">{formatCurrency(order.totalAmount)}</span>
-                  </div>
-                  {order.remark && (
-                    <div className="col-span-2">
-                      <span className="text-gray-500">备注：</span>
-                      <span className="text-gray-700">{order.remark}</span>
-                    </div>
-                  )}
-                  {order.arrivedAt && (
-                    <div>
-                      <span className="text-gray-500">到货时间：</span>
-                      <span className="text-gray-900">{formatDate(order.arrivedAt, "long")}</span>
-                    </div>
-                  )}
-                  {order.paidAt && (
-                    <div>
-                      <span className="text-gray-500">付款时间：</span>
-                      <span className="text-gray-900">{formatDate(order.paidAt, "long")}</span>
-                    </div>
-                  )}
-                </div>
-                {order.items && order.items.length > 0 && (
-                  <div className="overflow-hidden rounded-lg border border-gray-100 mb-4">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="bg-gray-50">
-                          <th className="text-left text-xs font-medium text-gray-500 px-4 py-2.5">零件</th>
-                          <th className="text-left text-xs font-medium text-gray-500 px-4 py-2.5">型号</th>
-                          <th className="text-center text-xs font-medium text-gray-500 px-4 py-2.5">数量</th>
-                          <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">进价</th>
-                          <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">小计</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {order.items.map((item) => (
-                          <tr key={item.id}>
-                            <td className="px-4 py-2.5 text-sm text-gray-900 font-medium">{item.partName}</td>
-                            <td className="px-4 py-2.5 text-sm text-gray-500">{item.partModel}</td>
-                            <td className="px-4 py-2.5 text-sm text-gray-900 text-center">{item.quantity}</td>
-                            <td className="px-4 py-2.5 text-sm text-gray-900 text-right">{formatCurrency(item.unitPrice)}</td>
-                            <td className="px-4 py-2.5 text-sm font-medium text-gray-900 text-right">{formatCurrency(item.quantity * item.unitPrice)}</td>
-                          </tr>
+
+                  {payments.length > 0 && (
+                    <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+                      <div className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1">
+                        <FileText className="w-3.5 h-3.5" /> 付款记录
+                      </div>
+                      <div className="space-y-1.5">
+                        {payments.map((p) => (
+                          <div key={p.id} className="flex items-center justify-between text-sm py-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`badge text-xs py-0.5 ${(PAYMENT_METHOD_COLORS as any)[p.method]}`}>
+                                {(PAYMENT_METHOD_LABELS as any)[p.method]}
+                              </span>
+                              <span className="text-xs text-gray-400">{formatDate(p.createdAt)}</span>
+                              {p.remark && <span className="text-xs text-gray-500">— {p.remark}</span>}
+                            </div>
+                            <span className="font-medium text-green-700">-{formatCurrency(p.amount)}</span>
+                          </div>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                <div className="flex justify-end gap-2">
-                  {order.status === "pending" && (
-                    <>
+                      </div>
+                    </div>
+                  )}
+
+                  {order.items && order.items.length > 0 && (
+                    <div className="overflow-hidden rounded-lg border border-gray-100 mb-4">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="bg-gray-50">
+                            <th className="text-left text-xs font-medium text-gray-500 px-4 py-2.5">零件</th>
+                            <th className="text-left text-xs font-medium text-gray-500 px-4 py-2.5">型号</th>
+                            <th className="text-center text-xs font-medium text-gray-500 px-4 py-2.5">数量</th>
+                            <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">进价</th>
+                            <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">小计</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {order.items.map((item) => (
+                            <tr key={item.id}>
+                              <td className="px-4 py-2.5 text-sm text-gray-900 font-medium">{item.partName}</td>
+                              <td className="px-4 py-2.5 text-sm text-gray-500">{item.partModel}</td>
+                              <td className="px-4 py-2.5 text-sm text-gray-900 text-center">{item.quantity}</td>
+                              <td className="px-4 py-2.5 text-sm text-gray-900 text-right">{formatCurrency(item.unitPrice)}</td>
+                              <td className="px-4 py-2.5 text-sm font-medium text-gray-900 text-right">{formatCurrency(item.quantity * item.unitPrice)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-2">
+                    {order.status === "pending" && (
+                      <>
+                        <button
+                          onClick={() => handleCancel(order.id)}
+                          className="btn-danger text-sm py-1.5 px-4"
+                        >
+                          <XCircle className="w-3.5 h-3.5" /> 取消
+                        </button>
+                        <button
+                          onClick={() => handleConfirm(order.id)}
+                          className="btn-primary text-sm py-1.5 px-4"
+                        >
+                          <Truck className="w-3.5 h-3.5" /> 确认到货入库
+                        </button>
+                      </>
+                    )}
+                    {unpaid > 0.001 && order.status !== "cancelled" && (
                       <button
-                        onClick={() => handleCancel(order.id)}
-                        className="btn-danger text-sm py-1.5 px-4"
-                      >
-                        <XCircle className="w-3.5 h-3.5" /> 取消
-                      </button>
-                      <button
-                        onClick={() => handleConfirm(order.id)}
+                        onClick={() => openPayModal(order)}
                         className="btn-primary text-sm py-1.5 px-4"
                       >
-                        <Truck className="w-3.5 h-3.5" /> 确认到货入库
+                        <DollarSign className="w-3.5 h-3.5" />
+                        {paid > 0 ? "继续付款" : "登记付款"}
                       </button>
-                    </>
-                  )}
-                  {!order.isPaid && order.status !== "cancelled" && (
-                    <button
-                      onClick={() => handlePay(order.id)}
-                      className="btn-primary text-sm py-1.5 px-4"
-                    >
-                      <DollarSign className="w-3.5 h-3.5" /> 标记已付款
-                    </button>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
@@ -429,6 +531,87 @@ export default function PurchaseOrders() {
               <ShoppingCart className="w-4 h-4" />
               创建采购单 ({formatCurrency(totalAmount)})
             </button>
+          </div>
+        </div>
+      )}
+
+      {showPayModal && payOrder && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">登记付款</h3>
+              <button onClick={() => setShowPayModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-amber-700">应付总额</span>
+                  <span className="font-semibold text-amber-900">{formatCurrency(payOrder.totalAmount)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm mt-1">
+                  <span className="text-amber-700">已付款</span>
+                  <span className="font-semibold text-green-700">{formatCurrency(payOrderPaid)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm mt-1 pt-1 border-t border-amber-200">
+                  <span className="text-amber-700 font-medium">剩余应付</span>
+                  <span className="font-bold text-red-600">{formatCurrency(payOrderUnpaid)}</span>
+                </div>
+              </div>
+              <div>
+                <label className="label">付款金额 (¥)</label>
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  max={payOrderUnpaid}
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                  className="input text-lg"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  最多可付 <span className="font-medium text-red-600">{formatCurrency(payOrderUnpaid)}</span>
+                </p>
+              </div>
+              <div>
+                <label className="label">付款方式</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {payMethodOptions.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setPayMethod(opt.value)}
+                      className={`py-2 px-3 text-sm rounded-lg border transition-all ${
+                        payMethod === opt.value
+                          ? "border-primary-500 bg-primary-50 text-primary-700 font-medium"
+                          : "border-gray-200 text-gray-600 hover:border-gray-300"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="label">备注（可选）</label>
+                <input
+                  type="text"
+                  value={payRemark}
+                  onChange={(e) => setPayRemark(e.target.value)}
+                  placeholder="如：预付款、尾款等"
+                  className="input"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowPayModal(false)} className="btn-secondary flex-1">
+                  取消
+                </button>
+                <button onClick={handleSubmitPayment} className="btn-primary flex-1">
+                  <DollarSign className="w-4 h-4" />
+                  确认付款
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

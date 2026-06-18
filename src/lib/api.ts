@@ -7,6 +7,7 @@ import type {
   PaymentMethod,
   Supplier,
   RepairPayment,
+  FinancialTransaction,
 } from "~shared/types";
 
 const API_BASE = "/api";
@@ -70,6 +71,16 @@ export const repairsApi = {
     request<any[]>(`/repairs/${id}/communications`),
   deleteCommunication: (id: number, logId: number) =>
     request<any>(`/repairs/${id}/communications/${logId}`, { method: "DELETE" }),
+  returnVisit: (id: number, content: string, satisfaction?: string) =>
+    request<any>(`/repairs/${id}/return-visit`, {
+      method: "POST",
+      body: JSON.stringify({ content, satisfaction }),
+    }),
+  warrantyContacted: (id: number, content?: string) =>
+    request<any>(`/repairs/${id}/warranty-contacted`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
 };
 
 export const partsApi = {
@@ -104,8 +115,11 @@ export const purchasesApi = {
     }),
   confirm: (id: number) =>
     request<PurchaseOrder>(`/purchases/${id}/confirm`, { method: "POST" }),
-  pay: (id: number) =>
-    request<PurchaseOrder>(`/purchases/${id}/pay`, { method: "POST" }),
+  pay: (id: number, amount: number, method: PaymentMethod, remark?: string) =>
+    request<PurchaseOrder>(`/purchases/${id}/pay`, {
+      method: "POST",
+      body: JSON.stringify({ amount, method, remark }),
+    }),
   cancel: (id: number) =>
     request<PurchaseOrder>(`/purchases/${id}/cancel`, { method: "POST" }),
 };
@@ -146,4 +160,56 @@ export const statisticsApi = {
     request<any>(`/statistics/export${month ? `?month=${month}` : ""}`),
 };
 
-export type { RepairPayment };
+export const financialApi = {
+  list: (params?: {
+    startDate?: string;
+    endDate?: string;
+    type?: string;
+    method?: string;
+    keyword?: string;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.startDate) q.set("startDate", params.startDate);
+    if (params?.endDate) q.set("endDate", params.endDate);
+    if (params?.type) q.set("type", params.type);
+    if (params?.method) q.set("method", params.method);
+    if (params?.keyword) q.set("keyword", params.keyword);
+    return request<{
+      transactions: FinancialTransaction[];
+      summary: {
+        totalIncome: number;
+        totalExpense: number;
+        byMethod: Record<string, { income: number; expense: number }>;
+      };
+      todaySummary: {
+        cash: number;
+        wechat: number;
+        alipay: number;
+      };
+    }>(`/financial${q.toString() ? `?${q.toString()}` : ""}`);
+  },
+  create: (data: {
+    type: string;
+    amount: number;
+    method: PaymentMethod;
+    customerName?: string;
+    supplierName?: string;
+    remark: string;
+  }) =>
+    request<FinancialTransaction>(`/financial`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  remove: (id: number) =>
+    request<{ success: boolean }>(`/financial/${id}`, { method: "DELETE" }),
+  daily: (params?: { startDate?: string; endDate?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.startDate) q.set("startDate", params.startDate);
+    if (params?.endDate) q.set("endDate", params.endDate);
+    return request<{ date: string; type: string; total: number }[]>(
+      `/financial/daily${q.toString() ? `?${q.toString()}` : ""}`
+    );
+  },
+};
+
+export type { RepairPayment, FinancialTransaction };

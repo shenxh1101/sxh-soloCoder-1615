@@ -13,6 +13,7 @@ export type CommunicationType = 'phone' | 'quote_confirm' | 'pickup_notify' | 'n
 export type InventoryTxType = 'repair_use' | 'manual_in' | 'repair_return' | 'purchase_in';
 
 export type PaymentMethod = 'cash' | 'wechat' | 'alipay' | 'unpaid';
+export type FinancialTxType = 'repair_income' | 'purchase_expense' | 'manual_income' | 'manual_expense';
 
 export type PurchaseOrderStatus = 'pending' | 'arrived' | 'cancelled';
 
@@ -76,6 +77,28 @@ export interface RepairPayment {
   createdAt: string;
 }
 
+export interface PurchasePayment {
+  id: number;
+  purchaseOrderId: number;
+  amount: number;
+  method: PaymentMethod;
+  remark?: string;
+  createdAt: string;
+}
+
+export interface FinancialTransaction {
+  id: number;
+  type: FinancialTxType;
+  amount: number;
+  method: PaymentMethod;
+  repairId?: number;
+  purchaseOrderId?: number;
+  customerName?: string;
+  supplierName?: string;
+  remark?: string;
+  createdAt: string;
+}
+
 export interface PurchaseOrder {
   id: number;
   supplier: string;
@@ -88,6 +111,7 @@ export interface PurchaseOrder {
   arrivedAt?: string;
   paidAt?: string;
   items: PurchaseOrderItem[];
+  payments?: PurchasePayment[];
 }
 
 export interface RepairOrder {
@@ -202,6 +226,20 @@ export const PURCHASE_STATUS_COLORS: Record<PurchaseOrderStatus, string> = {
   pending: 'bg-amber-100 text-amber-700',
   arrived: 'bg-green-100 text-green-700',
   cancelled: 'bg-gray-100 text-gray-600',
+};
+
+export const FINANCIAL_TX_TYPE_LABELS: Record<FinancialTxType, string> = {
+  repair_income: '维修收款',
+  purchase_expense: '采购付款',
+  manual_income: '其他收入',
+  manual_expense: '其他支出',
+};
+
+export const FINANCIAL_TX_TYPE_COLORS: Record<FinancialTxType, string> = {
+  repair_income: 'bg-green-100 text-green-700',
+  purchase_expense: 'bg-red-100 text-red-700',
+  manual_income: 'bg-blue-100 text-blue-700',
+  manual_expense: 'bg-orange-100 text-orange-700',
 };
 
 export const FAULT_TYPES = [

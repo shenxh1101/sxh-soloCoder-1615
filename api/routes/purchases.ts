@@ -14,11 +14,18 @@ function getItemsForPurchase(purchaseOrderId: number) {
     .all(purchaseOrderId);
 }
 
+function getPaymentsForPurchase(purchaseOrderId: number) {
+  return db
+    .prepare('SELECT * FROM purchase_payments WHERE purchaseOrderId = ? ORDER BY createdAt')
+    .all(purchaseOrderId);
+}
+
 function mapRowToPurchaseOrder(row: any) {
   return {
     ...row,
     isPaid: Boolean(row.isPaid),
     items: getItemsForPurchase(row.id),
+    payments: getPaymentsForPurchase(row.id),
   };
 }
 
@@ -119,16 +126,60 @@ router.post('/:id/confirm', (req, res) => {
 
 router.post('/:id/pay', (req, res) => {
   const { id } = req.params;
+  const { amount, method, remark } = req.body;
+
   const po = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as any;
   if (!po) {
     res.status(404).json({ error: '采购单不存在' });
     return;
   }
-  if (po.isPaid) {
-    res.status(400).json({ error: '该采购单已付款' });
+  if (po.status === 'cancelled') {
+    res.status(400).json({ error: '已取消的采购单不能付款' });
     return;
   }
-  db.prepare('UPDATE purchase_orders SET isPaid = 1, paidAt = ? WHERE id = ?').run(new Date().toISOString(), id);
+
+  const amt = Number(amount);
+  if (!amt || amt <= 0) {
+    return res.status(400).json({ error: '付款金额必须大于 0' });
+  }
+  if (!method || !['cash', 'wechat', 'alipay'].includes(method)) {
+    return res.status(400).json({ error: '请选择有效的付款方式' });
+  }
+
+  const payments = getPaymentsForPurchase(Number(id)) as any[];
+  const paidAmount = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const remaining = Number(po.totalAmount) - paidAmount;
+
+  if (amt > remaining + 0.001) {
+    return res.status(400).json({ error: `付款金额不能超过剩余应付 ¥${remaining.toFixed(2)}` });
+  }
+
+  const tx = db.transaction(() => {
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO purchase_payments (purchaseOrderId, amount, method, remark, createdAt)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(Number(id), amt, method, remark || null, now);
+
+    const newPayments = getPaymentsForPurchase(Number(id)) as any[];
+    const totalPaid = newPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const newRemaining = Number(po.totalAmount) - totalPaid;
+    const isFullyPaid = newRemaining <= 0.001;
+
+    db.prepare(
+      `UPDATE purchase_orders SET isPaid = ?, paidAt = ? WHERE id = ?`
+    ).run(isFullyPaid ? 1 : 0, isFullyPaid ? now : po.paidAt, id);
+
+    db.prepare(`
+      INSERT INTO financial_transactions
+        (type, amount, method, purchaseOrderId, supplierName, remark, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('purchase_expense', amt, method, Number(id), po.supplier, remark || null, now);
+  });
+
+  tx();
+
   const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id);
   res.json(mapRowToPurchaseOrder(row));
 });

@@ -415,11 +415,23 @@ router.post('/:id/complete', (req, res) => {
 
   const receipt = generateReceipt(repairWithParts, partsTotal, finalLaborFee, totalAmount, method, paidAmount, payments);
 
-  db.prepare(
-    `UPDATE repair_orders 
-     SET laborFee = ?, totalAmount = ?, paid = ?, paymentMethod = ?, receipt = ?, status = 'completed', completedAt = ?
-     WHERE id = ?`
-  ).run(finalLaborFee, totalAmount, method === 'unpaid' ? 0 : 1, method, receipt, now, id);
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE repair_orders 
+       SET laborFee = ?, totalAmount = ?, paid = ?, paymentMethod = ?, receipt = ?, status = 'completed', completedAt = ?
+       WHERE id = ?`
+    ).run(finalLaborFee, totalAmount, method === 'unpaid' ? 0 : 1, method, receipt, now, id);
+
+    if (method !== 'unpaid') {
+      db.prepare(`
+        INSERT INTO financial_transactions
+          (type, amount, method, repairId, customerName, remark, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run('repair_income', totalAmount, method, Number(id), existing.customerName || null, '结算收款', now);
+    }
+  });
+
+  tx();
 
   const row = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
   res.json(mapRowToRepairOrder(row));
@@ -429,16 +441,13 @@ router.post('/:id/pay', (req, res) => {
   const { id } = req.params;
   const { amount, method, remark } = req.body;
 
-  if (!amount || amount <= 0) {
+  const amt = Number(amount);
+  if (!amt || amt <= 0) {
     res.status(400).json({ error: '收款金额必须大于 0' });
     return;
   }
   if (!method || method === 'unpaid') {
     res.status(400).json({ error: '请选择有效的收款方式' });
-    return;
-  }
-  if (amount < 0) {
-    res.status(400).json({ error: '收款金额不能为负数' });
     return;
   }
 
@@ -452,25 +461,52 @@ router.post('/:id/pay', (req, res) => {
     return;
   }
 
-  const now = new Date().toISOString();
-  db.prepare(
-    'INSERT INTO repair_payments (repairId, amount, method, remark, createdAt) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, amount, method, remark || null, now);
-
-  const payments = getPayments(Number(id));
-  const paidAmount = payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
   const totalAmount = Number(existing.totalAmount || 0);
-  const isFullyPaid = paidAmount >= totalAmount && totalAmount > 0;
+  if (totalAmount <= 0) {
+    return res.status(400).json({ error: '该维修单没有应收金额' });
+  }
 
-  const parts = getPartsForRepair(Number(id));
-  const partsTotal = parts.reduce((sum, p) => sum + p.quantity * p.unitPrice, 0);
-  const repairWithParts = { ...existing, partsUsed: parts };
-  const displayMethod = isFullyPaid ? method : existing.paymentMethod || method;
-  const receipt = generateReceipt(repairWithParts, partsTotal, existing.laborFee || 0, totalAmount, displayMethod, paidAmount, payments);
+  const payments = getPayments(Number(id)) as any[];
+  const paidAmount = payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0) as number;
+  const remaining = totalAmount - paidAmount;
 
-  db.prepare(
-    `UPDATE repair_orders SET paid = ?, paymentMethod = ?, receipt = ? WHERE id = ?`
-  ).run(isFullyPaid ? 1 : existing.paid, isFullyPaid ? (method as PaymentMethod) : existing.paymentMethod, receipt, id);
+  if (remaining <= 0.001) {
+    return res.status(400).json({ error: '该维修单已全额收款' });
+  }
+  if (amt > remaining + 0.001) {
+    return res.status(400).json({ error: `收款金额不能超过剩余应收 ¥${remaining.toFixed(2)}` });
+  }
+
+  const now = new Date().toISOString();
+
+  const tx = db.transaction(() => {
+    db.prepare(
+      'INSERT INTO repair_payments (repairId, amount, method, remark, createdAt) VALUES (?, ?, ?, ?, ?)'
+    ).run(id, amt, method, remark || null, now);
+
+    db.prepare(`
+      INSERT INTO financial_transactions
+        (type, amount, method, repairId, customerName, remark, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('repair_income', amt, method, Number(id), existing.customerName || null, remark || null, now);
+
+    const newPayments = getPayments(Number(id)) as any[];
+    const newPaidAmount = newPayments.reduce((sum: number, p: any) => sum + Number(p.amount), 0) as number;
+    const newRemaining = totalAmount - newPaidAmount;
+    const isFullyPaid = newRemaining <= 0.001;
+
+    const parts = getPartsForRepair(Number(id)) as any[];
+    const partsTotal = parts.reduce((sum: number, p: any) => sum + Number(p.quantity) * Number(p.unitPrice), 0);
+    const repairWithParts = { ...existing, partsUsed: parts };
+    const displayMethod = isFullyPaid ? method : (existing.paymentMethod || method);
+    const receipt = generateReceipt(repairWithParts, partsTotal, Number(existing.laborFee) || 0, totalAmount, displayMethod, newPaidAmount, newPayments);
+
+    db.prepare(
+      `UPDATE repair_orders SET paid = ?, paymentMethod = ?, receipt = ? WHERE id = ?`
+    ).run(isFullyPaid ? 1 : existing.paid, isFullyPaid ? (method as PaymentMethod) : existing.paymentMethod, receipt, id);
+  });
+
+  tx();
 
   const row = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
   res.json(mapRowToRepairOrder(row));
@@ -523,6 +559,51 @@ router.delete('/:id/communications/:logId', (req, res) => {
   }
   db.prepare('DELETE FROM communication_logs WHERE id = ?').run(logId);
   res.json({ success: true });
+});
+
+router.post('/:id/return-visit', (req, res) => {
+  const { id } = req.params;
+  const { content, satisfaction } = req.body;
+
+  const repair = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
+  if (!repair) {
+    return res.status(404).json({ error: '维修单不存在' });
+  }
+  if (!content || !content.trim()) {
+    return res.status(400).json({ error: '回访内容不能为空' });
+  }
+
+  const now = new Date().toISOString();
+  const fullContent = satisfaction
+    ? `${content}\n客户满意度：${satisfaction}`
+    : content;
+
+  const info = db
+    .prepare('INSERT INTO communication_logs (repairId, type, content, createdAt) VALUES (?, ?, ?, ?)')
+    .run(id, 'return_visit', fullContent, now);
+
+  const log = db.prepare('SELECT * FROM communication_logs WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json(log);
+});
+
+router.post('/:id/warranty-contacted', (req, res) => {
+  const { id } = req.params;
+  const { content } = req.body;
+
+  const repair = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
+  if (!repair) {
+    return res.status(404).json({ error: '维修单不存在' });
+  }
+
+  const now = new Date().toISOString();
+  const defaultContent = content?.trim() || '已联系客户，提醒保修即将到期';
+
+  const info = db
+    .prepare('INSERT INTO communication_logs (repairId, type, content, createdAt) VALUES (?, ?, ?, ?)')
+    .run(id, 'warranty', defaultContent, now);
+
+  const log = db.prepare('SELECT * FROM communication_logs WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json(log);
 });
 
 export default router;

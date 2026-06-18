@@ -7,6 +7,7 @@ import {
   ShoppingCart,
   Settings,
   Users,
+  DollarSign,
 } from "lucide-react";
 
 const navItems = [
@@ -15,6 +16,7 @@ const navItems = [
   { to: "/inventory", label: "零件库存", icon: Package },
   { to: "/purchases", label: "采购管理", icon: ShoppingCart },
   { to: "/suppliers", label: "供应商管理", icon: Users },
+  { to: "/financial", label: "收支流水", icon: DollarSign },
   { to: "/statistics", label: "统计报表", icon: BarChart3 },
 ];
 

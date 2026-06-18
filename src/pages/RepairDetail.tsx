@@ -273,8 +273,13 @@ export default function RepairDetail() {
 
   async function handleSubmitPayment() {
     if (!id) return;
+    const remaining = unpaidAmount > 0 ? unpaidAmount : (repair.totalAmount || 0);
     if (!payAmount || payAmount <= 0) {
       alert("收款金额必须大于 0");
+      return;
+    }
+    if (payAmount > remaining + 0.001) {
+      alert(`收款金额不能超过剩余应收 ¥${remaining.toFixed(2)}`);
       return;
     }
     if (!payMethod || payMethod === "unpaid") {
@@ -1133,16 +1138,34 @@ export default function RepairDetail() {
               </button>
             </div>
             <div className="space-y-4">
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-amber-700">应收总额</span>
+                  <span className="font-semibold text-amber-900">{formatCurrency(repair.totalAmount || 0)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm mt-1">
+                  <span className="text-amber-700">已收款</span>
+                  <span className="font-semibold text-green-700">{formatCurrency(paidAmount)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm mt-1 pt-1 border-t border-amber-200">
+                  <span className="text-amber-700 font-medium">剩余应收</span>
+                  <span className="font-bold text-red-600">{formatCurrency(unpaidAmount || repair.totalAmount || 0)}</span>
+                </div>
+              </div>
               <div>
                 <label className="label">收款金额 (¥)</label>
                 <input
                   type="number"
                   min={0.01}
                   step={0.01}
+                  max={unpaidAmount || repair.totalAmount || 0}
                   value={payAmount}
                   onChange={(e) => setPayAmount(Number(e.target.value))}
                   className="input text-lg"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  最多可收 <span className="font-medium text-red-600">{formatCurrency(unpaidAmount || repair.totalAmount || 0)}</span>
+                </p>
               </div>
               <div>
                 <label className="label">收款方式</label>
