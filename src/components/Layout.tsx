@@ -4,6 +4,7 @@ import {
   Wrench,
   Package,
   BarChart3,
+  ShoppingCart,
   Settings,
 } from "lucide-react";
 
@@ -11,6 +12,7 @@ const navItems = [
   { to: "/", label: "仪表盘", icon: LayoutDashboard, end: true },
   { to: "/repairs", label: "维修单", icon: Wrench },
   { to: "/inventory", label: "零件库存", icon: Package },
+  { to: "/purchases", label: "采购管理", icon: ShoppingCart },
   { to: "/statistics", label: "统计报表", icon: BarChart3 },
 ];
 

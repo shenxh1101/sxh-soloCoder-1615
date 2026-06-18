@@ -1,4 +1,4 @@
-import type { RepairOrder, Part, RepairStatus, CommunicationType } from "~shared/types";
+import type { RepairOrder, Part, RepairStatus, CommunicationType, PurchaseOrder, PaymentMethod } from "~shared/types";
 
 const API_BASE = "/api";
 
@@ -39,10 +39,10 @@ export const repairsApi = {
     }),
   removePart: (id: number, partUsageId: number) =>
     request<RepairOrder>(`/repairs/${id}/parts/${partUsageId}`, { method: "DELETE" }),
-  complete: (id: number, laborFee: number) =>
+  complete: (id: number, laborFee: number, paymentMethod: PaymentMethod) =>
     request<RepairOrder>(`/repairs/${id}/complete`, {
       method: "POST",
-      body: JSON.stringify({ laborFee }),
+      body: JSON.stringify({ laborFee, paymentMethod }),
     }),
   addCommunication: (id: number, type: CommunicationType, content: string) =>
     request<any>(`/repairs/${id}/communications`, {
@@ -70,6 +70,17 @@ export const partsApi = {
     }),
   getTransactions: (id: number) =>
     request<any[]>(`/parts/${id}/transactions`),
+};
+
+export const purchasesApi = {
+  list: () => request<PurchaseOrder[]>(`/purchases`),
+  get: (id: number) => request<PurchaseOrder>(`/purchases/${id}`),
+  create: (data: { supplier: string; remark?: string; items: { partId: number; quantity: number; unitPrice: number }[] }) =>
+    request<PurchaseOrder>(`/purchases`, { method: "POST", body: JSON.stringify(data) }),
+  confirm: (id: number) =>
+    request<PurchaseOrder>(`/purchases/${id}/confirm`, { method: "POST" }),
+  cancel: (id: number) =>
+    request<PurchaseOrder>(`/purchases/${id}/cancel`, { method: "POST" }),
 };
 
 export const statisticsApi = {

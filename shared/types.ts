@@ -8,9 +8,13 @@ export type RepairStatus =
 
 export type DeviceType = '电脑' | '笔记本' | '手机' | '其他';
 
-export type CommunicationType = 'phone' | 'quote_confirm' | 'pickup_notify' | 'note';
+export type CommunicationType = 'phone' | 'quote_confirm' | 'pickup_notify' | 'note' | 'warranty' | 'return_visit';
 
-export type InventoryTxType = 'repair_use' | 'manual_in' | 'repair_return';
+export type InventoryTxType = 'repair_use' | 'manual_in' | 'repair_return' | 'purchase_in';
+
+export type PaymentMethod = 'cash' | 'wechat' | 'alipay' | 'unpaid';
+
+export type PurchaseOrderStatus = 'pending' | 'arrived' | 'cancelled';
 
 export interface RepairPart {
   id: number;
@@ -36,10 +40,32 @@ export interface InventoryTransaction {
   type: InventoryTxType;
   quantity: number;
   repairId?: number;
+  purchaseOrderId?: number;
   remark?: string;
   createdAt: string;
   partName?: string;
   partModel?: string;
+}
+
+export interface PurchaseOrderItem {
+  id: number;
+  purchaseOrderId: number;
+  partId: number;
+  partName?: string;
+  partModel?: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface PurchaseOrder {
+  id: number;
+  supplier: string;
+  status: PurchaseOrderStatus;
+  totalAmount: number;
+  remark?: string;
+  createdAt: string;
+  arrivedAt?: string;
+  items: PurchaseOrderItem[];
 }
 
 export interface RepairOrder {
@@ -60,6 +86,10 @@ export interface RepairOrder {
   completedAt?: string;
   totalAmount?: number;
   paid: boolean;
+  paymentMethod?: PaymentMethod;
+  receipt?: string;
+  warrantyExpires?: string;
+  relatedRepairId?: number;
   partsUsed: RepairPart[];
   communications?: CommunicationLog[];
 }
@@ -98,6 +128,8 @@ export const COMM_TYPE_LABELS: Record<CommunicationType, string> = {
   quote_confirm: '报价确认',
   pickup_notify: '取件通知',
   note: '备注',
+  warranty: '保修记录',
+  return_visit: '售后回访',
 };
 
 export const COMM_TYPE_COLORS: Record<CommunicationType, string> = {
@@ -105,18 +137,48 @@ export const COMM_TYPE_COLORS: Record<CommunicationType, string> = {
   quote_confirm: 'bg-green-100 text-green-700',
   pickup_notify: 'bg-amber-100 text-amber-700',
   note: 'bg-gray-100 text-gray-700',
+  warranty: 'bg-purple-100 text-purple-700',
+  return_visit: 'bg-teal-100 text-teal-700',
 };
 
 export const INV_TX_TYPE_LABELS: Record<InventoryTxType, string> = {
   repair_use: '维修扣减',
   manual_in: '手动入库',
   repair_return: '维修退回',
+  purchase_in: '采购入库',
 };
 
 export const INV_TX_TYPE_COLORS: Record<InventoryTxType, string> = {
   repair_use: 'text-red-600',
   manual_in: 'text-green-600',
   repair_return: 'text-blue-600',
+  purchase_in: 'text-purple-600',
+};
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  cash: '现金',
+  wechat: '微信',
+  alipay: '支付宝',
+  unpaid: '未付款',
+};
+
+export const PAYMENT_METHOD_COLORS: Record<PaymentMethod, string> = {
+  cash: 'bg-green-100 text-green-700',
+  wechat: 'bg-emerald-100 text-emerald-700',
+  alipay: 'bg-blue-100 text-blue-700',
+  unpaid: 'bg-red-100 text-red-700',
+};
+
+export const PURCHASE_STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
+  pending: '待到货',
+  arrived: '已到货',
+  cancelled: '已取消',
+};
+
+export const PURCHASE_STATUS_COLORS: Record<PurchaseOrderStatus, string> = {
+  pending: 'bg-amber-100 text-amber-700',
+  arrived: 'bg-green-100 text-green-700',
+  cancelled: 'bg-gray-100 text-gray-600',
 };
 
 export const FAULT_TYPES = [

@@ -1,0 +1,358 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { Plus, ShoppingCart, CheckCircle, XCircle, Search, Package, Truck, X, AlertTriangle } from "lucide-react";
+import type { Part, PurchaseOrder } from "~shared/types";
+import { PURCHASE_STATUS_LABELS, PURCHASE_STATUS_COLORS } from "~shared/types";
+import { purchasesApi, partsApi } from "@/lib/api";
+import { formatCurrency, formatDate } from "@/lib/utils";
+
+type TabType = "list" | "create";
+
+export default function PurchaseOrders() {
+  const [tab, setTab] = useState<TabType>("list");
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [allParts, setAllParts] = useState<Part[]>([]);
+  const [supplier, setSupplier] = useState("");
+  const [poRemark, setPoRemark] = useState("");
+  const [selectedItems, setSelectedItems] = useState<{ partId: number; quantity: number; unitPrice: number }[]>([]);
+  const [addPartId, setAddPartId] = useState<number | "">("");
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    try {
+      const [orderData, partsData] = await Promise.all([
+        purchasesApi.list(),
+        partsApi.list(),
+      ]);
+      setOrders(orderData);
+      setAllParts(partsData);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function addPartToOrder() {
+    if (!addPartId) return;
+    const part = allParts.find((p) => p.id === Number(addPartId));
+    if (!part) return;
+    if (selectedItems.find((i) => i.partId === part.id)) return;
+    setSelectedItems([...selectedItems, { partId: part.id, quantity: Math.max(part.safetyStock * 2 - part.stock, 1), unitPrice: part.unitPrice }]);
+    setAddPartId("");
+  }
+
+  function removeItem(partId: number) {
+    setSelectedItems(selectedItems.filter((i) => i.partId !== partId));
+  }
+
+  function updateItemQty(partId: number, quantity: number) {
+    setSelectedItems(selectedItems.map((i) => i.partId === partId ? { ...i, quantity } : i));
+  }
+
+  function updateItemPrice(partId: number, unitPrice: number) {
+    setSelectedItems(selectedItems.map((i) => i.partId === partId ? { ...i, unitPrice } : i));
+  }
+
+  async function handleCreate() {
+    if (!supplier || selectedItems.length === 0) {
+      alert("请填写供应商和选择采购零件");
+      return;
+    }
+    try {
+      await purchasesApi.create({ supplier, remark: poRemark || undefined, items: selectedItems });
+      setSupplier("");
+      setPoRemark("");
+      setSelectedItems([]);
+      setTab("list");
+      loadData();
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
+  async function handleConfirm(id: number) {
+    if (!confirm("确认到货？零件将自动入库")) return;
+    try {
+      await purchasesApi.confirm(id);
+      loadData();
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
+  async function handleCancel(id: number) {
+    if (!confirm("确定取消该采购单？")) return;
+    try {
+      await purchasesApi.cancel(id);
+      loadData();
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
+  function addLowStockParts() {
+    const lowStock = allParts.filter((p) => p.stock <= p.safetyStock);
+    const newItems = lowStock
+      .filter((p) => !selectedItems.find((i) => i.partId === p.id))
+      .map((p) => ({ partId: p.id, quantity: Math.max(p.safetyStock * 2 - p.stock, 1), unitPrice: p.unitPrice }));
+    if (newItems.length === 0) {
+      alert("当前没有库存不足的零件");
+      return;
+    }
+    setSelectedItems([...selectedItems, ...newItems]);
+  }
+
+  const totalAmount = selectedItems.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
+
+  const availablePartsForSelect = allParts.filter(
+    (p) => !selectedItems.find((i) => i.partId === p.id)
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">采购管理</h1>
+        <div className="flex items-center gap-3">
+          <Link to="/inventory" className="btn-secondary">
+            <Package className="w-4 h-4" />
+            返回库存
+          </Link>
+          <button
+            onClick={() => setTab(tab === "create" ? "list" : "create")}
+            className={tab === "create" ? "btn-secondary" : "btn-primary"}
+          >
+            <Plus className="w-4 h-4" />
+            {tab === "create" ? "返回列表" : "新建采购单"}
+          </button>
+        </div>
+      </div>
+
+      {tab === "list" && (
+        <div className="space-y-4">
+          {orders.length === 0 ? (
+            <div className="card p-12 text-center">
+              <ShoppingCart className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500">暂无采购单</p>
+            </div>
+          ) : (
+            orders.map((order) => (
+              <div key={order.id} className="card p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-semibold text-gray-900">采购单 #{order.id}</h3>
+                    <span className={`badge ${PURCHASE_STATUS_COLORS[order.status]}`}>
+                      {PURCHASE_STATUS_LABELS[order.status]}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    创建时间：{formatDate(order.createdAt, "long")}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                  <div>
+                    <span className="text-gray-500">供应商：</span>
+                    <span className="text-gray-900 font-medium">{order.supplier}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">总金额：</span>
+                    <span className="text-gray-900 font-bold">{formatCurrency(order.totalAmount)}</span>
+                  </div>
+                  {order.remark && (
+                    <div className="col-span-2">
+                      <span className="text-gray-500">备注：</span>
+                      <span className="text-gray-700">{order.remark}</span>
+                    </div>
+                  )}
+                  {order.arrivedAt && (
+                    <div>
+                      <span className="text-gray-500">到货时间：</span>
+                      <span className="text-gray-900">{formatDate(order.arrivedAt, "long")}</span>
+                    </div>
+                  )}
+                </div>
+                {order.items && order.items.length > 0 && (
+                  <div className="overflow-hidden rounded-lg border border-gray-100 mb-4">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-gray-50">
+                          <th className="text-left text-xs font-medium text-gray-500 px-4 py-2.5">零件</th>
+                          <th className="text-left text-xs font-medium text-gray-500 px-4 py-2.5">型号</th>
+                          <th className="text-center text-xs font-medium text-gray-500 px-4 py-2.5">数量</th>
+                          <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">进价</th>
+                          <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">小计</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {order.items.map((item) => (
+                          <tr key={item.id}>
+                            <td className="px-4 py-2.5 text-sm text-gray-900 font-medium">{item.partName}</td>
+                            <td className="px-4 py-2.5 text-sm text-gray-500">{item.partModel}</td>
+                            <td className="px-4 py-2.5 text-sm text-gray-900 text-center">{item.quantity}</td>
+                            <td className="px-4 py-2.5 text-sm text-gray-900 text-right">{formatCurrency(item.unitPrice)}</td>
+                            <td className="px-4 py-2.5 text-sm font-medium text-gray-900 text-right">{formatCurrency(item.quantity * item.unitPrice)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {order.status === "pending" && (
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => handleCancel(order.id)}
+                      className="btn-danger text-sm py-1.5 px-4"
+                    >
+                      <XCircle className="w-3.5 h-3.5" /> 取消
+                    </button>
+                    <button
+                      onClick={() => handleConfirm(order.id)}
+                      className="btn-primary text-sm py-1.5 px-4"
+                    >
+                      <Truck className="w-3.5 h-3.5" /> 确认到货入库
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {tab === "create" && (
+        <div className="card p-6">
+          <h3 className="font-semibold text-gray-900 mb-4">新建采购单</h3>
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div>
+              <label className="label">供应商</label>
+              <input
+                type="text"
+                value={supplier}
+                onChange={(e) => setSupplier(e.target.value)}
+                className="input"
+                placeholder="输入供应商名称"
+              />
+            </div>
+            <div>
+              <label className="label">备注（可选）</label>
+              <input
+                type="text"
+                value={poRemark}
+                onChange={(e) => setPoRemark(e.target.value)}
+                className="input"
+                placeholder="如：紧急补货等"
+              />
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <label className="label mb-0">采购零件</label>
+              <button onClick={addLowStockParts} className="btn-secondary text-sm py-1 px-3">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                一键添加库存不足零件
+              </button>
+            </div>
+            <div className="flex gap-2 mb-3">
+              <select
+                value={addPartId}
+                onChange={(e) => setAddPartId(Number(e.target.value) || "")}
+                className="input flex-1"
+              >
+                <option value="">选择零件添加到采购单...</option>
+                {availablePartsForSelect.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} - {p.model} (库存: {p.stock})
+                  </option>
+                ))}
+              </select>
+              <button onClick={addPartToOrder} disabled={!addPartId} className="btn-secondary">
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+
+            {selectedItems.length > 0 ? (
+              <div className="overflow-hidden rounded-lg border border-gray-100">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="text-left text-xs font-medium text-gray-500 px-4 py-2.5">零件</th>
+                      <th className="text-center text-xs font-medium text-gray-500 px-4 py-2.5">数量</th>
+                      <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">进价</th>
+                      <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">小计</th>
+                      <th className="text-center text-xs font-medium text-gray-500 px-4 py-2.5"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {selectedItems.map((item) => {
+                      const part = allParts.find((p) => p.id === item.partId);
+                      return (
+                        <tr key={item.partId}>
+                          <td className="px-4 py-2.5">
+                            <div className="text-sm font-medium text-gray-900">{part?.name}</div>
+                            <div className="text-xs text-gray-500">{part?.model}</div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <input
+                              type="number"
+                              min={1}
+                              value={item.quantity}
+                              onChange={(e) => updateItemQty(item.partId, Math.max(1, Number(e.target.value)))}
+                              className="input w-20 py-1 text-center text-sm"
+                            />
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={item.unitPrice}
+                              onChange={(e) => updateItemPrice(item.partId, Number(e.target.value))}
+                              className="input w-24 py-1 text-right text-sm"
+                            />
+                          </td>
+                          <td className="px-4 py-2.5 text-sm font-medium text-gray-900 text-right">
+                            {formatCurrency(item.quantity * item.unitPrice)}
+                          </td>
+                          <td className="px-4 py-2.5 text-center">
+                            <button onClick={() => removeItem(item.partId)} className="text-red-500 hover:text-red-700">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-gray-50">
+                      <td colSpan={3} className="px-4 py-2.5 text-sm font-medium text-gray-700 text-right">合计</td>
+                      <td className="px-4 py-2.5 text-sm font-bold text-primary-600 text-right">{formatCurrency(totalAmount)}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400 bg-gray-50 rounded-lg">
+                请选择要采购的零件
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+            <button onClick={() => setTab("list")} className="btn-secondary">取消</button>
+            <button
+              onClick={handleCreate}
+              disabled={!supplier || selectedItems.length === 0}
+              className="btn-primary"
+            >
+              <ShoppingCart className="w-4 h-4" />
+              创建采购单 ({formatCurrency(totalAmount)})
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -34,6 +34,43 @@ function mapRowToRepairOrder(row: any): RepairOrder {
   };
 }
 
+function generateReceipt(repair: any, partsTotal: number, laborFee: number, totalAmount: number, paymentMethod: string): string {
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const lines: string[] = [
+    `══════════════════════════════════`,
+    `         维修店收款收据`,
+    `══════════════════════════════════`,
+    ``,
+    `收据编号：RCPT-${String(repair.id).padStart(4,'0')}`,
+    `日    期：${dateStr}`,
+    ``,
+    `客户信息：${repair.customerName || '未登记'} / ${repair.customerPhone}`,
+    `设备型号：${repair.deviceType} ${repair.deviceModel}`,
+    `故障描述：${repair.faultDescription}`,
+    ``,
+    `────── 费用明细 ──────`,
+  ];
+
+  if (repair.partsUsed && repair.partsUsed.length > 0) {
+    lines.push(`【零件费】`);
+    for (const p of repair.partsUsed) {
+      lines.push(`  ${p.partName} x${p.quantity}  ${p.unitPrice}  = ¥${(p.quantity * p.unitPrice).toFixed(2)}`);
+    }
+  }
+  lines.push(`  零件费小计：¥${partsTotal.toFixed(2)}`);
+  lines.push(`【工时费】¥${laborFee.toFixed(2)}`);
+  lines.push(``);
+  lines.push(`  总    计：¥${totalAmount.toFixed(2)}`);
+  lines.push(``);
+  lines.push(`付款方式：${paymentMethod === 'cash' ? '现金' : paymentMethod === 'wechat' ? '微信' : paymentMethod === 'alipay' ? '支付宝' : '未付款'}`);
+  lines.push(``);
+  lines.push(`══════════════════════════════════`);
+  lines.push(`        感谢惠顾，欢迎再来！`);
+  lines.push(`══════════════════════════════════`);
+  return lines.join('\n');
+}
+
 router.get('/', (req, res) => {
   const { status, phone } = req.query;
   let sql = 'SELECT * FROM repair_orders WHERE 1=1';
@@ -112,6 +149,8 @@ router.put('/:id', (req, res) => {
     'quotedPrice',
     'laborFee',
     'customerConfirmed',
+    'warrantyExpires',
+    'relatedRepairId',
   ];
   const updates: string[] = [];
   const values: any[] = [];
@@ -183,8 +222,8 @@ router.post('/:id/parts', (req, res) => {
     return;
   }
 
-  if (repair.status !== 'repairing' && repair.status !== 'pending_confirm') {
-    res.status(400).json({ error: '当前状态不允许添加零件' });
+  if (repair.status !== 'repairing') {
+    res.status(400).json({ error: '只有维修中的工单才能添加零件，请先确认客户报价并开始维修' });
     return;
   }
 
@@ -242,7 +281,7 @@ router.delete('/:id/parts/:partUsageId', (req, res) => {
 
 router.post('/:id/complete', (req, res) => {
   const { id } = req.params;
-  const { laborFee } = req.body;
+  const { laborFee, paymentMethod } = req.body;
 
   const existing = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id) as any;
   if (!existing) {
@@ -255,16 +294,21 @@ router.post('/:id/complete', (req, res) => {
     return;
   }
 
+  const method = paymentMethod || 'cash';
   const parts = getPartsForRepair(Number(id));
   const partsTotal = parts.reduce((sum, p) => sum + p.quantity * p.unitPrice, 0);
-  const totalAmount = partsTotal + (laborFee ?? 0);
+  const finalLaborFee = laborFee ?? 0;
+  const totalAmount = partsTotal + finalLaborFee;
   const now = new Date().toISOString();
+
+  const repairWithParts = { ...existing, partsUsed: parts };
+  const receipt = generateReceipt(repairWithParts, partsTotal, finalLaborFee, totalAmount, method);
 
   db.prepare(
     `UPDATE repair_orders 
-     SET laborFee = ?, totalAmount = ?, paid = 1, status = 'completed', completedAt = ?
+     SET laborFee = ?, totalAmount = ?, paid = ?, paymentMethod = ?, receipt = ?, status = 'completed', completedAt = ?
      WHERE id = ?`
-  ).run(laborFee ?? 0, totalAmount, now, id);
+  ).run(finalLaborFee, totalAmount, method === 'unpaid' ? 0 : 1, method, receipt, now, id);
 
   const row = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
   res.json(mapRowToRepairOrder(row));

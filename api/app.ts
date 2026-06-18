@@ -14,6 +14,7 @@ import dotenv from 'dotenv'
 import authRoutes from './routes/auth.js'
 import repairRoutes from './routes/repairs.js'
 import partRoutes from './routes/parts.js'
+import purchaseRoutes from './routes/purchases.js'
 import statisticsRoutes from './routes/statistics.js'
 import './db.js'
 
@@ -38,6 +39,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 app.use('/api/auth', authRoutes)
 app.use('/api/repairs', repairRoutes)
 app.use('/api/parts', partRoutes)
+app.use('/api/purchases', purchaseRoutes)
 app.use('/api/statistics', statisticsRoutes)
 
 /**

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, AlertTriangle, Package, Search, PlusCircle, Edit3, FileText, X } from "lucide-react";
+import { Plus, AlertTriangle, Package, Search, PlusCircle, Edit3, FileText, X, ShoppingCart } from "lucide-react";
 import type { Part } from "~shared/types";
 import { INV_TX_TYPE_LABELS, INV_TX_TYPE_COLORS } from "~shared/types";
 import { partsApi } from "@/lib/api";
@@ -88,10 +88,16 @@ export default function Inventory() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">零件库存</h1>
-        <Link to="/inventory/new" className="btn-primary">
-          <Plus className="w-4 h-4" />
-          新增零件
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/purchases" className="btn-secondary">
+            <ShoppingCart className="w-4 h-4" />
+            采购管理
+          </Link>
+          <Link to="/inventory/new" className="btn-primary">
+            <Plus className="w-4 h-4" />
+            新增零件
+          </Link>
+        </div>
       </div>
 
       {lowStockParts.length > 0 && (
@@ -378,17 +384,18 @@ export default function Inventory() {
                       <div className={`absolute left-0 top-1.5 w-4 h-4 rounded-full ${
                         tx.type === 'manual_in' ? 'bg-green-100 border-2 border-green-400' :
                         tx.type === 'repair_use' ? 'bg-red-100 border-2 border-red-400' :
+                        tx.type === 'purchase_in' ? 'bg-purple-100 border-2 border-purple-400' :
                         'bg-blue-100 border-2 border-blue-400'
                       }`} />
                       <div>
                         <div className="flex items-center gap-2 mb-0.5">
-                          <span className={`text-sm font-medium ${INV_TX_TYPE_COLORS[tx.type as keyof typeof INV_TX_TYPE_COLORS]}`}>
-                            {INV_TX_TYPE_LABELS[tx.type as keyof typeof INV_TX_TYPE_LABELS]}
+                          <span className={`text-sm font-medium ${INV_TX_TYPE_COLORS[tx.type as keyof typeof INV_TX_TYPE_COLORS] || 'text-gray-600'}`}>
+                            {INV_TX_TYPE_LABELS[tx.type as keyof typeof INV_TX_TYPE_LABELS] || tx.type}
                           </span>
                           <span className={`text-sm font-bold ${
-                            tx.type === 'manual_in' ? 'text-green-600' : tx.type === 'repair_return' ? 'text-blue-600' : 'text-red-600'
+                            tx.type === 'manual_in' || tx.type === 'repair_return' || tx.type === 'purchase_in' ? 'text-green-600' : 'text-red-600'
                           }`}>
-                            {tx.type === 'manual_in' || tx.type === 'repair_return' ? '+' : '-'}{tx.quantity}
+                            {tx.type === 'manual_in' || tx.type === 'repair_return' || tx.type === 'purchase_in' ? '+' : '-'}{tx.quantity}
                           </span>
                           <span className="text-xs text-gray-400">
                             {formatDate(tx.createdAt, "long")}

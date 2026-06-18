@@ -6,6 +6,7 @@ import NewRepair from "@/pages/NewRepair";
 import RepairDetail from "@/pages/RepairDetail";
 import Inventory from "@/pages/Inventory";
 import NewPart from "@/pages/NewPart";
+import PurchaseOrders from "@/pages/PurchaseOrders";
 import Statistics from "@/pages/Statistics";
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="/repairs/:id" element={<RepairDetail />} />
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/inventory/new" element={<NewPart />} />
+          <Route path="/purchases" element={<PurchaseOrders />} />
           <Route path="/statistics" element={<Statistics />} />
         </Route>
       </Routes>

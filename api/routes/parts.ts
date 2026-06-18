@@ -58,8 +58,8 @@ router.post('/', (req, res) => {
 
   if ((stock || 0) > 0) {
     db.prepare(
-      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(info.lastInsertRowid, 'manual_in', stock, null, `新零件入库：${name}`, new Date().toISOString());
+      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, purchaseOrderId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(info.lastInsertRowid, 'manual_in', stock, null, null, `新零件入库：${name}`, new Date().toISOString());
   }
 
   res.status(201).json(mapRow(row));
@@ -101,8 +101,8 @@ router.post('/:id/stock', (req, res) => {
   const tx = db.transaction(() => {
     db.prepare('UPDATE parts SET stock = stock + ? WHERE id = ?').run(quantity, id);
     db.prepare(
-      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(id, 'manual_in', quantity, null, remark || `手动入库 ${existing.name}`, new Date().toISOString());
+      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, purchaseOrderId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(id, 'manual_in', quantity, null, null, remark || `手动入库 ${existing.name}`, new Date().toISOString());
   });
   tx();
 
