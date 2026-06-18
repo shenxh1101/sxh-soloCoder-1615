@@ -56,10 +56,34 @@ function initDatabase() {
       FOREIGN KEY (partId) REFERENCES parts(id)
     );
 
+    CREATE TABLE IF NOT EXISTS communication_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      repairId INTEGER NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('phone', 'quote_confirm', 'pickup_notify', 'note')),
+      content TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (repairId) REFERENCES repair_orders(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      partId INTEGER NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('repair_use', 'manual_in', 'repair_return')),
+      quantity INTEGER NOT NULL,
+      repairId INTEGER,
+      remark TEXT,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (partId) REFERENCES parts(id),
+      FOREIGN KEY (repairId) REFERENCES repair_orders(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_repair_orders_status ON repair_orders(status);
     CREATE INDEX IF NOT EXISTS idx_repair_orders_phone ON repair_orders(customerPhone);
     CREATE INDEX IF NOT EXISTS idx_repair_parts_repair ON repair_parts(repairId);
     CREATE INDEX IF NOT EXISTS idx_parts_category ON parts(category);
+    CREATE INDEX IF NOT EXISTS idx_comm_logs_repair ON communication_logs(repairId);
+    CREATE INDEX IF NOT EXISTS idx_inv_trans_part ON inventory_transactions(partId);
+    CREATE INDEX IF NOT EXISTS idx_inv_trans_created ON inventory_transactions(createdAt);
   `);
 
   const partCount = db.prepare('SELECT COUNT(*) as count FROM parts').get() as { count: number };
@@ -127,6 +151,37 @@ function initDatabase() {
       for (const rp of data) insertRepairPart.run(...rp);
     });
     tx2(repairParts);
+
+    const insertCommLog = db.prepare(
+      'INSERT INTO communication_logs (repairId, type, content, createdAt) VALUES (?, ?, ?, ?)'
+    );
+    const commLogs = [
+      [1, 'phone', '客户张先生来电询问维修进度，已告知正在维修中', daysAgo(1)],
+      [1, 'quote_confirm', '报价350元，客户电话确认同意', daysAgo(1, 2)],
+      [2, 'pickup_notify', '已电话通知客户取机，客户说明天来', daysAgo(1)],
+      [3, 'quote_confirm', '报价520元，等待客户确认', daysAgo(0, 10)],
+      [5, 'phone', '客户孙先生反馈充电恢复正常', daysAgo(6)],
+      [5, 'pickup_notify', '通知客户取机，客户表示当天来取', daysAgo(7)],
+    ];
+    const tx3 = db.transaction((data: unknown[][]) => {
+      for (const c of data) insertCommLog.run(...c);
+    });
+    tx3(commLogs);
+
+    const insertInvTx = db.prepare(
+      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    const invTxs = [
+      [9, 'repair_use', 1, 1, '维修单#1 使用电源适配器', daysAgo(2)],
+      [4, 'repair_use', 1, 2, '维修单#2 使用手机屏幕总成', daysAgo(4)],
+      [6, 'repair_use', 1, 5, '维修单#5 使用手机电池', daysAgo(8)],
+      [1, 'manual_in', 10, null, '批量进货DDR4 8GB内存条', daysAgo(10)],
+      [7, 'manual_in', 5, null, '补充固态硬盘库存', daysAgo(5)],
+    ];
+    const tx4 = db.transaction((data: unknown[][]) => {
+      for (const t of data) insertInvTx.run(...t);
+    });
+    tx4(invTxs);
   }
 }
 

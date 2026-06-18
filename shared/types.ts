@@ -8,6 +8,10 @@ export type RepairStatus =
 
 export type DeviceType = '电脑' | '笔记本' | '手机' | '其他';
 
+export type CommunicationType = 'phone' | 'quote_confirm' | 'pickup_notify' | 'note';
+
+export type InventoryTxType = 'repair_use' | 'manual_in' | 'repair_return';
+
 export interface RepairPart {
   id: number;
   repairId: number;
@@ -16,6 +20,26 @@ export interface RepairPart {
   partModel?: string;
   quantity: number;
   unitPrice: number;
+}
+
+export interface CommunicationLog {
+  id: number;
+  repairId: number;
+  type: CommunicationType;
+  content: string;
+  createdAt: string;
+}
+
+export interface InventoryTransaction {
+  id: number;
+  partId: number;
+  type: InventoryTxType;
+  quantity: number;
+  repairId?: number;
+  remark?: string;
+  createdAt: string;
+  partName?: string;
+  partModel?: string;
 }
 
 export interface RepairOrder {
@@ -37,6 +61,7 @@ export interface RepairOrder {
   totalAmount?: number;
   paid: boolean;
   partsUsed: RepairPart[];
+  communications?: CommunicationLog[];
 }
 
 export interface Part {
@@ -66,6 +91,32 @@ export const STATUS_COLORS: Record<RepairStatus, string> = {
   ready: 'bg-amber-100 text-amber-700',
   completed: 'bg-green-100 text-green-700',
   cancelled: 'bg-red-100 text-red-700',
+};
+
+export const COMM_TYPE_LABELS: Record<CommunicationType, string> = {
+  phone: '电话沟通',
+  quote_confirm: '报价确认',
+  pickup_notify: '取件通知',
+  note: '备注',
+};
+
+export const COMM_TYPE_COLORS: Record<CommunicationType, string> = {
+  phone: 'bg-blue-100 text-blue-700',
+  quote_confirm: 'bg-green-100 text-green-700',
+  pickup_notify: 'bg-amber-100 text-amber-700',
+  note: 'bg-gray-100 text-gray-700',
+};
+
+export const INV_TX_TYPE_LABELS: Record<InventoryTxType, string> = {
+  repair_use: '维修扣减',
+  manual_in: '手动入库',
+  repair_return: '维修退回',
+};
+
+export const INV_TX_TYPE_COLORS: Record<InventoryTxType, string> = {
+  repair_use: 'text-red-600',
+  manual_in: 'text-green-600',
+  repair_return: 'text-blue-600',
 };
 
 export const FAULT_TYPES = [

@@ -1,4 +1,4 @@
-import type { RepairOrder, Part, RepairStatus } from "~shared/types";
+import type { RepairOrder, Part, RepairStatus, CommunicationType } from "~shared/types";
 
 const API_BASE = "/api";
 
@@ -44,6 +44,15 @@ export const repairsApi = {
       method: "POST",
       body: JSON.stringify({ laborFee }),
     }),
+  addCommunication: (id: number, type: CommunicationType, content: string) =>
+    request<any>(`/repairs/${id}/communications`, {
+      method: "POST",
+      body: JSON.stringify({ type, content }),
+    }),
+  listCommunications: (id: number) =>
+    request<any[]>(`/repairs/${id}/communications`),
+  deleteCommunication: (id: number, logId: number) =>
+    request<any>(`/repairs/${id}/communications/${logId}`, { method: "DELETE" }),
 };
 
 export const partsApi = {
@@ -54,18 +63,34 @@ export const partsApi = {
     request<Part>(`/parts`, { method: "POST", body: JSON.stringify(data) }),
   update: (id: number, data: Partial<Part>) =>
     request<Part>(`/parts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  addStock: (id: number, quantity: number) =>
+  addStock: (id: number, quantity: number, remark?: string) =>
     request<Part>(`/parts/${id}/stock`, {
       method: "POST",
-      body: JSON.stringify({ quantity }),
+      body: JSON.stringify({ quantity, remark }),
     }),
+  getTransactions: (id: number) =>
+    request<any[]>(`/parts/${id}/transactions`),
 };
 
 export const statisticsApi = {
   monthly: () => request<{ month: string; count: number }[]>(`/statistics/monthly`),
-  faults: () => request<{ name: string; value: number }[]>(`/statistics/faults`),
-  parts: () =>
-    request<{ name: string; model: string; totalUsed: number; totalAmount: number }[]>(
-      `/statistics/parts`
+  faults: (month?: string) =>
+    request<{ name: string; value: number }[]>(
+      `/statistics/faults${month ? `?month=${month}` : ""}`
     ),
+  parts: (month?: string) =>
+    request<{ name: string; model: string; totalUsed: number; totalAmount: number }[]>(
+      `/statistics/parts${month ? `?month=${month}` : ""}`
+    ),
+  summary: (month?: string) =>
+    request<{
+      month: string;
+      repairCount: number;
+      completedCount: number;
+      totalRevenue: number;
+      partsRevenue: number;
+      laborRevenue: number;
+    }>(`/statistics/summary${month ? `?month=${month}` : ""}`),
+  exportReport: (month?: string) =>
+    request<any>(`/statistics/export${month ? `?month=${month}` : ""}`),
 };

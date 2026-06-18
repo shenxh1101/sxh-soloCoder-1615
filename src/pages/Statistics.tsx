@@ -12,7 +12,7 @@ import {
   Cell,
   Legend,
 } from "recharts";
-import { BarChart3, AlertCircle, TrendingUp } from "lucide-react";
+import { BarChart3, AlertCircle, TrendingUp, Download, Calendar } from "lucide-react";
 import { statisticsApi } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 
@@ -29,34 +29,106 @@ const COLORS = [
   "#6366f1",
 ];
 
+function getMonthOptions() {
+  const options: string[] = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    options.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return options;
+}
+
 export default function Statistics() {
   const [monthly, setMonthly] = useState<{ month: string; count: number }[]>([]);
   const [faults, setFaults] = useState<{ name: string; value: number }[]>([]);
   const [parts, setParts] = useState<
     { name: string; model: string; totalUsed: number; totalAmount: number }[]
   >([]);
+  const [selectedMonth, setSelectedMonth] = useState<string>("");
+  const [summary, setSummary] = useState<{
+    month: string;
+    repairCount: number;
+    completedCount: number;
+    totalRevenue: number;
+    partsRevenue: number;
+    laborRevenue: number;
+  } | null>(null);
+  const [monthOptions] = useState(getMonthOptions);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [selectedMonth]);
 
   async function loadData() {
     try {
-      const [m, f, p] = await Promise.all([
+      const [m, f, p, s] = await Promise.all([
         statisticsApi.monthly(),
-        statisticsApi.faults(),
-        statisticsApi.parts(),
+        statisticsApi.faults(selectedMonth || undefined),
+        statisticsApi.parts(selectedMonth || undefined),
+        statisticsApi.summary(selectedMonth || undefined),
       ]);
       setMonthly(m);
       setFaults(f);
       setParts(p);
+      setSummary(s);
     } catch (e) {
       console.error(e);
     }
   }
 
+  async function handleExport() {
+    try {
+      const data = await statisticsApi.exportReport(selectedMonth || undefined);
+      const lines: string[] = [];
+      const m = data.month;
+      lines.push(`=== 维修店月度报表 ${m} ===`);
+      lines.push(`导出时间：${new Date(data.exportedAt).toLocaleString("zh-CN")}`);
+      lines.push("");
+      lines.push(`--- 概览 ---`);
+      lines.push(`维修台数：${data.summary?.repairCount || 0}`);
+      lines.push(`已完成数：${data.summary?.completedCount || 0}`);
+      lines.push(`总收入：¥${(data.summary?.totalRevenue || 0).toFixed(2)}`);
+      lines.push("");
+      lines.push(`--- 故障分布 ---`);
+      (data.faults || []).forEach((f: any) => {
+        lines.push(`${f.name}：${f.value}台`);
+      });
+      lines.push("");
+      lines.push(`--- 零件消耗 ---`);
+      (data.partsConsumption || []).forEach((p: any) => {
+        lines.push(`${p.name}(${p.model})：使用${p.totalUsed}件，金额¥${(p.totalAmount || 0).toFixed(2)}`);
+      });
+      lines.push("");
+      lines.push(`--- 维修明细 ---`);
+      (data.repairs || []).forEach((r: any) => {
+        lines.push(`#${r.id} ${r.customerName || r.customerPhone} ${r.deviceType} ${r.deviceModel} ${r.faultType || "未分类"} ${STATUS_LABELS[r.status] || r.status} 报价¥${r.quotedPrice || 0} 总额¥${r.totalAmount || 0}`);
+      });
+
+      const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `维修店报表_${m}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert("导出失败");
+    }
+  }
+
   const totalRepairs = monthly.reduce((sum, m) => sum + m.count, 0);
   const totalRevenue = parts.reduce((sum, p) => sum + p.totalAmount, 0);
+
+  const STATUS_LABELS: Record<string, string> = {
+    pending_check: "待检查",
+    pending_confirm: "待确认",
+    repairing: "维修中",
+    ready: "待取件",
+    completed: "已完成",
+    cancelled: "已取消",
+  };
 
   return (
     <div className="space-y-6">
@@ -65,43 +137,121 @@ export default function Statistics() {
           <h1 className="text-2xl font-bold text-gray-900">统计报表</h1>
           <p className="text-sm text-gray-500 mt-1">查看经营数据和业务统计</p>
         </div>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Calendar className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="input pl-9 pr-8"
+            >
+              <option value="">全部月份</option>
+              {monthOptions.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button onClick={handleExport} className="btn-secondary">
+            <Download className="w-4 h-4" />
+            导出报表
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <div className="card p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">累计维修台数</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">{totalRepairs}</p>
+      {summary && (
+        <div className="grid grid-cols-4 gap-4">
+          <div className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">
+                  {selectedMonth ? "当月维修" : "维修台数"}
+                </p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">{summary.repairCount}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
+                <BarChart3 className="w-6 h-6 text-white" />
+              </div>
             </div>
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
-              <BarChart3 className="w-6 h-6 text-white" />
+          </div>
+          <div className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">已完成</p>
+                <p className="text-3xl font-bold text-green-600 mt-1">{summary.completedCount}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-lg">
+                <TrendingUp className="w-6 h-6 text-white" />
+              </div>
+            </div>
+          </div>
+          <div className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">总收入</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(summary.totalRevenue)}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-lg">
+                <TrendingUp className="w-6 h-6 text-white" />
+              </div>
+            </div>
+            <div className="mt-2 flex gap-4 text-xs text-gray-400">
+              <span>零件：{formatCurrency(summary.partsRevenue)}</span>
+              <span>工时：{formatCurrency(summary.laborRevenue)}</span>
+            </div>
+          </div>
+          <div className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">故障类型</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">{faults.length}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center shadow-lg">
+                <AlertCircle className="w-6 h-6 text-white" />
+              </div>
             </div>
           </div>
         </div>
-        <div className="card p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">零件销售额</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(totalRevenue)}</p>
+      )}
+
+      {!summary && (
+        <div className="grid grid-cols-3 gap-4">
+          <div className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">累计维修台数</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">{totalRepairs}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
+                <BarChart3 className="w-6 h-6 text-white" />
+              </div>
             </div>
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-lg">
-              <TrendingUp className="w-6 h-6 text-white" />
+          </div>
+          <div className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">零件销售额</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(totalRevenue)}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-lg">
+                <TrendingUp className="w-6 h-6 text-white" />
+              </div>
+            </div>
+          </div>
+          <div className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">故障类型</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1">{faults.length}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center shadow-lg">
+                <AlertCircle className="w-6 h-6 text-white" />
+              </div>
             </div>
           </div>
         </div>
-        <div className="card p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">故障类型</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">{faults.length}</p>
-            </div>
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center shadow-lg">
-              <AlertCircle className="w-6 h-6 text-white" />
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-2 gap-6">
         <div className="card p-6">

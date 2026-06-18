@@ -14,9 +14,12 @@ import {
   AlertTriangle,
   Save,
   Check,
+  MessageSquare,
+  Send,
+  AlertOctagon,
 } from "lucide-react";
-import type { RepairOrder, RepairStatus, Part } from "~shared/types";
-import { STATUS_LABELS, STATUS_COLORS, FAULT_TYPES } from "~shared/types";
+import type { RepairOrder, RepairStatus, Part, CommunicationType } from "~shared/types";
+import { STATUS_LABELS, STATUS_COLORS, FAULT_TYPES, COMM_TYPE_LABELS, COMM_TYPE_COLORS } from "~shared/types";
 import { repairsApi, partsApi } from "@/lib/api";
 import { formatDate, formatCurrency, isOverdue } from "@/lib/utils";
 
@@ -26,6 +29,13 @@ const statusFlow: { status: RepairStatus; label: string; icon: any }[] = [
   { status: "repairing", label: "维修中", icon: Wrench },
   { status: "ready", label: "待取件", icon: PackageCheck },
   { status: "completed", label: "已完成", icon: CheckCircle },
+];
+
+const commTypeOptions: { value: CommunicationType; label: string }[] = [
+  { value: "phone", label: "电话沟通" },
+  { value: "quote_confirm", label: "报价确认" },
+  { value: "pickup_notify", label: "取件通知" },
+  { value: "note", label: "备注" },
 ];
 
 export default function RepairDetail() {
@@ -38,6 +48,8 @@ export default function RepairDetail() {
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState<any>({});
   const [laborFeeInput, setLaborFeeInput] = useState(0);
+  const [newCommType, setNewCommType] = useState<CommunicationType>("phone");
+  const [newCommContent, setNewCommContent] = useState("");
 
   useEffect(() => {
     if (id) loadData();
@@ -79,6 +91,8 @@ export default function RepairDetail() {
   const currentStepIndex = statusFlow.findIndex((s) => s.status === repair.status);
   const isRepairOverdue =
     repair.status === "ready" && repair.readyAt && isOverdue(repair.readyAt) > 3;
+
+  const canStartRepair = repair.customerConfirmed && repair.repairPlan && repair.quotedPrice;
 
   async function handleStatusChange(newStatus: RepairStatus) {
     if (!id) return;
@@ -136,9 +150,35 @@ export default function RepairDetail() {
     }
   }
 
+  async function handleAddCommunication() {
+    if (!id || !newCommContent.trim()) return;
+    try {
+      await repairsApi.addCommunication(Number(id), newCommType, newCommContent.trim());
+      const updated = await repairsApi.get(Number(id));
+      setRepair(updated);
+      setNewCommContent("");
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
+  async function handleDeleteCommunication(logId: number) {
+    if (!id) return;
+    if (!confirm("确定删除该沟通记录？")) return;
+    try {
+      await repairsApi.deleteCommunication(Number(id), logId);
+      const updated = await repairsApi.get(Number(id));
+      setRepair(updated);
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
   const availableParts = allParts.filter(
     (p) => p.stock > 0 && !repair.partsUsed.find((ru) => ru.partId === p.id)
   );
+
+  const communications = repair.communications || [];
 
   return (
     <div className="space-y-6">
@@ -182,12 +222,19 @@ export default function RepairDetail() {
             const isDone = index < currentStepIndex;
             const isCurrent = index === currentStepIndex;
             const isCancelled = repair.status === "cancelled";
+            const isBlocked =
+              step.status === "repairing" && !canStartRepair && index > currentStepIndex;
             return (
               <div key={step.status} className="flex items-center flex-1">
                 <div className="flex flex-col items-center">
                   <button
                     onClick={() => {
-                      if (!isCancelled && repair.status !== "completed" && index <= currentStepIndex + 1) {
+                      if (
+                        !isCancelled &&
+                        repair.status !== "completed" &&
+                        index <= currentStepIndex + 1 &&
+                        !isBlocked
+                      ) {
                         handleStatusChange(step.status);
                       }
                     }}
@@ -196,11 +243,14 @@ export default function RepairDetail() {
                         ? "bg-green-500 text-white"
                         : isCurrent
                         ? "bg-primary-600 text-white ring-4 ring-primary-100"
+                        : isBlocked
+                        ? "bg-gray-100 text-gray-300 cursor-not-allowed"
                         : "bg-gray-100 text-gray-400"
                     } ${
                       !isCancelled &&
                       repair.status !== "completed" &&
                       index <= currentStepIndex + 1 &&
+                      !isBlocked &&
                       index !== currentStepIndex
                         ? "cursor-pointer hover:scale-105"
                         : ""
@@ -208,14 +258,15 @@ export default function RepairDetail() {
                     disabled={
                       isCancelled ||
                       repair.status === "completed" ||
-                      index > currentStepIndex + 1
+                      index > currentStepIndex + 1 ||
+                      isBlocked
                     }
                   >
                     <step.icon className="w-5 h-5" />
                   </button>
                   <span
                     className={`mt-2 text-xs font-medium ${
-                      isCurrent ? "text-primary-700" : isDone ? "text-gray-700" : "text-gray-400"
+                      isCurrent ? "text-primary-700" : isDone ? "text-gray-700" : isBlocked ? "text-gray-300" : "text-gray-400"
                     }`}
                   >
                     {step.label}
@@ -242,6 +293,14 @@ export default function RepairDetail() {
             </div>
           )}
         </div>
+        {!canStartRepair && repair.status === "pending_confirm" && (
+          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+            <AlertOctagon className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span className="text-sm text-amber-800">
+              请先填写维修方案和报价，并勾选客户确认后，才能开始维修
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-6">
@@ -421,7 +480,7 @@ export default function RepairDetail() {
                       <th className="text-right text-xs font-medium text-gray-500 px-4 py-2.5">
                         小计
                       </th>
-                      {repair.status !== "completed" && (
+                      {repair.status !== "completed" && repair.status !== "cancelled" && (
                         <th className="text-center text-xs font-medium text-gray-500 px-4 py-2.5">
                           操作
                         </th>
@@ -444,7 +503,7 @@ export default function RepairDetail() {
                         <td className="px-4 py-3 text-sm font-medium text-gray-900 text-right">
                           {formatCurrency(p.quantity * p.unitPrice)}
                         </td>
-                        {repair.status !== "completed" && (
+                        {repair.status !== "completed" && repair.status !== "cancelled" && (
                           <td className="px-4 py-3 text-center">
                             <button
                               onClick={() => handleRemovePart(p.id)}
@@ -465,7 +524,7 @@ export default function RepairDetail() {
               </div>
             )}
 
-            {repair.status !== "completed" && repair.status !== "cancelled" && (
+            {repair.status === "repairing" && (
               <div className="flex items-end gap-3 pt-4 border-t border-gray-100">
                 <div className="flex-1">
                   <label className="label">添加零件</label>
@@ -503,20 +562,103 @@ export default function RepairDetail() {
               </div>
             )}
           </div>
+
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-primary-600" />
+                <h3 className="font-semibold text-gray-900">沟通记录</h3>
+                <span className="text-sm text-gray-400">({communications.length})</span>
+              </div>
+            </div>
+
+            <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+              <div className="flex gap-3">
+                <select
+                  value={newCommType}
+                  onChange={(e) => setNewCommType(e.target.value as CommunicationType)}
+                  className="input w-32"
+                >
+                  {commTypeOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={newCommContent}
+                  onChange={(e) => setNewCommContent(e.target.value)}
+                  placeholder="输入沟通内容..."
+                  className="input flex-1"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newCommContent.trim()) {
+                      handleAddCommunication();
+                    }
+                  }}
+                />
+                <button
+                  onClick={handleAddCommunication}
+                  disabled={!newCommContent.trim()}
+                  className="btn-primary"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {communications.length > 0 ? (
+              <div className="space-y-0">
+                {communications.map((comm, index) => (
+                  <div key={comm.id} className="relative pl-6 pb-4">
+                    {index < communications.length - 1 && (
+                      <div className="absolute left-[7px] top-6 bottom-0 w-0.5 bg-gray-200" />
+                    )}
+                    <div className="absolute left-0 top-1.5 w-4 h-4 rounded-full bg-primary-100 border-2 border-primary-400" />
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`badge text-xs ${COMM_TYPE_COLORS[comm.type]}`}>
+                            {COMM_TYPE_LABELS[comm.type]}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            {formatDate(comm.createdAt, "long")}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-700">{comm.content}</p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteCommunication(comm.id)}
+                        className="text-gray-300 hover:text-red-500 ml-2 flex-shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-gray-400 text-sm">
+                暂无沟通记录，添加第一条记录吧
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="space-y-6">
           <div className="card p-6">
             <div className="flex items-center gap-2 mb-4">
               <Calculator className="w-5 h-5 text-primary-600" />
-              <h3 className="font-semibold text-gray-900">费用结算</h3>
+              <h3 className="font-semibold text-gray-900">
+                {repair.status === "ready" ? "费用结算" : "费用预估"}
+              </h3>
             </div>
             <div className="space-y-3">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">零件费</span>
                 <span className="text-gray-900 font-medium">{formatCurrency(partsTotal)}</span>
               </div>
-              {repair.status !== "completed" ? (
+              {repair.status === "ready" || repair.status === "repairing" ? (
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-500">工时费</span>
                   <input
@@ -536,7 +678,9 @@ export default function RepairDetail() {
                 </div>
               )}
               <div className="border-t border-gray-100 pt-3 flex justify-between">
-                <span className="text-gray-700 font-medium">总金额</span>
+                <span className="text-gray-700 font-medium">
+                  {repair.status === "ready" ? "总金额" : "预估金额"}
+                </span>
                 <span className="text-2xl font-bold text-primary-600">
                   {formatCurrency(partsTotal + laborFeeInput)}
                 </span>
@@ -546,11 +690,15 @@ export default function RepairDetail() {
                   <CheckCircle className="w-5 h-5" />
                   <span className="font-medium">已收款</span>
                 </div>
-              ) : repair.status === "ready" || repair.status === "repairing" ? (
+              ) : repair.status === "ready" ? (
                 <button onClick={handleComplete} className="btn-primary w-full">
                   <CheckCircle className="w-4 h-4" />
                   完成结算收款
                 </button>
+              ) : repair.status === "repairing" ? (
+                <div className="text-xs text-gray-400 text-center py-2">
+                  维修中仅显示预估费用，完成维修后进入待取件再结算
+                </div>
               ) : null}
             </div>
           </div>
@@ -589,13 +737,31 @@ export default function RepairDetail() {
                     填写方案并报价
                   </button>
                 )}
-                {repair.status === "pending_confirm" && repair.customerConfirmed && (
-                  <button
-                    onClick={() => handleStatusChange("repairing")}
-                    className="btn-primary w-full"
-                  >
-                    开始维修
-                  </button>
+                {repair.status === "pending_confirm" && (
+                  <>
+                    {canStartRepair ? (
+                      <button
+                        onClick={() => handleStatusChange("repairing")}
+                        className="btn-primary w-full"
+                      >
+                        开始维修
+                      </button>
+                    ) : (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                        请先完成：{!repair.repairPlan && "填写维修方案 "}
+                        {!repair.quotedPrice && "填写报价 "}
+                        {!repair.customerConfirmed && "勾选客户确认"}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => {
+                        setEditMode(true);
+                      }}
+                      className="btn-secondary w-full"
+                    >
+                      编辑方案和报价
+                    </button>
+                  </>
                 )}
                 {repair.status === "repairing" && (
                   <button

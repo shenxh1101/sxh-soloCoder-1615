@@ -27,6 +27,26 @@ router.get('/:id', (req, res) => {
   res.json(mapRow(row));
 });
 
+router.get('/:id/transactions', (req, res) => {
+  const { id } = req.params;
+  const part = db.prepare('SELECT * FROM parts WHERE id = ?').get(id);
+  if (!part) {
+    res.status(404).json({ error: '零件不存在' });
+    return;
+  }
+  const rows = db
+    .prepare(
+      `SELECT it.*, p.name as partName, p.model as partModel
+       FROM inventory_transactions it
+       JOIN parts p ON it.partId = p.id
+       WHERE it.partId = ?
+       ORDER BY it.createdAt DESC
+       LIMIT 50`
+    )
+    .all(id);
+  res.json(rows);
+});
+
 router.post('/', (req, res) => {
   const { name, model, category, stock, safetyStock, unitPrice } = req.body;
   const info = db
@@ -35,6 +55,13 @@ router.post('/', (req, res) => {
     )
     .run(name, model, category || '', stock || 0, safetyStock || 5, unitPrice || 0, new Date().toISOString());
   const row = db.prepare('SELECT * FROM parts WHERE id = ?').get(info.lastInsertRowid);
+
+  if ((stock || 0) > 0) {
+    db.prepare(
+      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(info.lastInsertRowid, 'manual_in', stock, null, `新零件入库：${name}`, new Date().toISOString());
+  }
+
   res.status(201).json(mapRow(row));
 });
 
@@ -64,13 +91,21 @@ router.put('/:id', (req, res) => {
 
 router.post('/:id/stock', (req, res) => {
   const { id } = req.params;
-  const { quantity } = req.body;
-  const existing = db.prepare('SELECT * FROM parts WHERE id = ?').get(id);
+  const { quantity, remark } = req.body;
+  const existing = db.prepare('SELECT * FROM parts WHERE id = ?').get(id) as any;
   if (!existing) {
     res.status(404).json({ error: '零件不存在' });
     return;
   }
-  db.prepare('UPDATE parts SET stock = stock + ? WHERE id = ?').run(quantity, id);
+
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE parts SET stock = stock + ? WHERE id = ?').run(quantity, id);
+    db.prepare(
+      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(id, 'manual_in', quantity, null, remark || `手动入库 ${existing.name}`, new Date().toISOString());
+  });
+  tx();
+
   const row = db.prepare('SELECT * FROM parts WHERE id = ?').get(id);
   res.json(mapRow(row));
 });

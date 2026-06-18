@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, AlertTriangle, Package, Search, PlusCircle, Edit3 } from "lucide-react";
+import { Plus, AlertTriangle, Package, Search, PlusCircle, Edit3, FileText, X } from "lucide-react";
 import type { Part } from "~shared/types";
+import { INV_TX_TYPE_LABELS, INV_TX_TYPE_COLORS } from "~shared/types";
 import { partsApi } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
@@ -10,8 +11,11 @@ export default function Inventory() {
   const [search, setSearch] = useState("");
   const [stockModal, setStockModal] = useState<Part | null>(null);
   const [stockQty, setStockQty] = useState(1);
+  const [stockRemark, setStockRemark] = useState("");
   const [editModal, setEditModal] = useState<Part | null>(null);
   const [editForm, setEditForm] = useState<any>({});
+  const [txModal, setTxModal] = useState<Part | null>(null);
+  const [transactions, setTransactions] = useState<any[]>([]);
 
   useEffect(() => {
     loadParts();
@@ -38,9 +42,10 @@ export default function Inventory() {
   async function handleAddStock() {
     if (!stockModal || stockQty <= 0) return;
     try {
-      await partsApi.addStock(stockModal.id, stockQty);
+      await partsApi.addStock(stockModal.id, stockQty, stockRemark);
       setStockModal(null);
       setStockQty(1);
+      setStockRemark("");
       loadParts();
     } catch (e: any) {
       alert(e.message);
@@ -66,6 +71,16 @@ export default function Inventory() {
       loadParts();
     } catch (e: any) {
       alert(e.message);
+    }
+  }
+
+  async function openTransactions(part: Part) {
+    setTxModal(part);
+    try {
+      const data = await partsApi.getTransactions(part.id);
+      setTransactions(data);
+    } catch (e) {
+      console.error(e);
     }
   }
 
@@ -184,23 +199,30 @@ export default function Inventory() {
                     {formatDate(part.createdAt)}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => openTransactions(part)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                        title="查看流水"
+                      >
+                        <FileText className="w-4 h-4" />
+                      </button>
                       <button
                         onClick={() => {
                           setStockModal(part);
                           setStockQty(1);
+                          setStockRemark("");
                         }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
                       >
                         <PlusCircle className="w-4 h-4" />
                         入库
                       </button>
                       <button
                         onClick={() => openEdit(part)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                       >
                         <Edit3 className="w-4 h-4" />
-                        编辑
                       </button>
                     </div>
                   </td>
@@ -227,13 +249,23 @@ export default function Inventory() {
             <p className="text-sm text-gray-500 mb-4">
               当前库存：<span className="font-medium text-gray-900">{stockModal.stock}</span>
             </p>
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="label">入库数量</label>
               <input
                 type="number"
                 min={1}
                 value={stockQty}
                 onChange={(e) => setStockQty(Math.max(1, Number(e.target.value)))}
+                className="input"
+              />
+            </div>
+            <div className="mb-6">
+              <label className="label">备注（可选）</label>
+              <input
+                type="text"
+                value={stockRemark}
+                onChange={(e) => setStockRemark(e.target.value)}
+                placeholder="如：批量进货、补货等"
                 className="input"
               />
             </div>
@@ -316,6 +348,62 @@ export default function Inventory() {
               <button onClick={handleSaveEdit} className="btn-primary">
                 保存
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {txModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-[560px] max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  库存流水 - {txModal.name}
+                </h3>
+                <p className="text-sm text-gray-500">{txModal.model} · 当前库存：{txModal.stock}</p>
+              </div>
+              <button onClick={() => setTxModal(null)} className="p-1 hover:bg-gray-100 rounded">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto -mx-6 px-6">
+              {transactions.length > 0 ? (
+                <div className="space-y-0">
+                  {transactions.map((tx: any, index: number) => (
+                    <div key={tx.id} className="relative pl-6 pb-4">
+                      {index < transactions.length - 1 && (
+                        <div className="absolute left-[7px] top-6 bottom-0 w-0.5 bg-gray-200" />
+                      )}
+                      <div className={`absolute left-0 top-1.5 w-4 h-4 rounded-full ${
+                        tx.type === 'manual_in' ? 'bg-green-100 border-2 border-green-400' :
+                        tx.type === 'repair_use' ? 'bg-red-100 border-2 border-red-400' :
+                        'bg-blue-100 border-2 border-blue-400'
+                      }`} />
+                      <div>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className={`text-sm font-medium ${INV_TX_TYPE_COLORS[tx.type as keyof typeof INV_TX_TYPE_COLORS]}`}>
+                            {INV_TX_TYPE_LABELS[tx.type as keyof typeof INV_TX_TYPE_LABELS]}
+                          </span>
+                          <span className={`text-sm font-bold ${
+                            tx.type === 'manual_in' ? 'text-green-600' : tx.type === 'repair_return' ? 'text-blue-600' : 'text-red-600'
+                          }`}>
+                            {tx.type === 'manual_in' || tx.type === 'repair_return' ? '+' : '-'}{tx.quantity}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            {formatDate(tx.createdAt, "long")}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600">{tx.remark || '-'}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  暂无流水记录
+                </div>
+              )}
             </div>
           </div>
         </div>

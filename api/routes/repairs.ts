@@ -16,12 +16,21 @@ function getPartsForRepair(repairId: number) {
     .all(repairId) as RepairOrder['partsUsed'];
 }
 
+function getCommunications(repairId: number) {
+  return db
+    .prepare(
+      `SELECT * FROM communication_logs WHERE repairId = ? ORDER BY createdAt DESC`
+    )
+    .all(repairId);
+}
+
 function mapRowToRepairOrder(row: any): RepairOrder {
   return {
     ...row,
     customerConfirmed: Boolean(row.customerConfirmed),
     paid: Boolean(row.paid),
     partsUsed: getPartsForRepair(row.id),
+    communications: getCommunications(row.id),
   };
 }
 
@@ -127,9 +136,19 @@ router.put('/:id/status', (req, res) => {
   const { id } = req.params;
   const { status } = req.body as { status: RepairStatus };
 
-  const existing = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
+  const existing = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id) as any;
   if (!existing) {
     res.status(404).json({ error: '维修单不存在' });
+    return;
+  }
+
+  if (status === 'repairing' && !existing.customerConfirmed) {
+    res.status(400).json({ error: '客户未确认报价，无法开始维修' });
+    return;
+  }
+
+  if (status === 'repairing' && (!existing.repairPlan || !existing.quotedPrice)) {
+    res.status(400).json({ error: '请先填写维修方案和报价' });
     return;
   }
 
@@ -158,18 +177,23 @@ router.post('/:id/parts', (req, res) => {
   const { id } = req.params;
   const { partId, quantity } = req.body;
 
-  const repair = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
+  const repair = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id) as any;
   if (!repair) {
     res.status(404).json({ error: '维修单不存在' });
     return;
   }
 
-  const part = db.prepare('SELECT * FROM parts WHERE id = ?').get(partId);
+  if (repair.status !== 'repairing' && repair.status !== 'pending_confirm') {
+    res.status(400).json({ error: '当前状态不允许添加零件' });
+    return;
+  }
+
+  const part = db.prepare('SELECT * FROM parts WHERE id = ?').get(partId) as any;
   if (!part) {
     res.status(404).json({ error: '零件不存在' });
     return;
   }
-  if ((part as any).stock < quantity) {
+  if (part.stock < quantity) {
     res.status(400).json({ error: '零件库存不足' });
     return;
   }
@@ -179,9 +203,12 @@ router.post('/:id/parts', (req, res) => {
       id,
       partId,
       quantity,
-      (part as any).unitPrice
+      part.unitPrice
     );
     db.prepare('UPDATE parts SET stock = stock - ? WHERE id = ?').run(quantity, partId);
+    db.prepare(
+      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(partId, 'repair_use', quantity, id, `维修单#${id} 使用 ${part.name}`, new Date().toISOString());
   });
   tx();
 
@@ -189,18 +216,23 @@ router.post('/:id/parts', (req, res) => {
   res.json(mapRowToRepairOrder(row));
 });
 
-router.delete('/:id/parts/:partId', (req, res) => {
-  const { id, partId } = req.params;
+router.delete('/:id/parts/:partUsageId', (req, res) => {
+  const { id, partUsageId } = req.params;
 
-  const rp = db.prepare('SELECT * FROM repair_parts WHERE id = ? AND repairId = ?').get(partId, id);
+  const rp = db.prepare('SELECT * FROM repair_parts WHERE id = ? AND repairId = ?').get(partUsageId, id) as any;
   if (!rp) {
     res.status(404).json({ error: '记录不存在' });
     return;
   }
 
+  const part = db.prepare('SELECT * FROM parts WHERE id = ?').get(rp.partId) as any;
+
   const tx = db.transaction(() => {
-    db.prepare('UPDATE parts SET stock = stock + ? WHERE id = ?').run((rp as any).quantity, (rp as any).partId);
-    db.prepare('DELETE FROM repair_parts WHERE id = ?').run(partId);
+    db.prepare('UPDATE parts SET stock = stock + ? WHERE id = ?').run(rp.quantity, rp.partId);
+    db.prepare('DELETE FROM repair_parts WHERE id = ?').run(partUsageId);
+    db.prepare(
+      'INSERT INTO inventory_transactions (partId, type, quantity, repairId, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(rp.partId, 'repair_return', rp.quantity, id, `维修单#${id} 退回 ${part?.name || '零件'}`, new Date().toISOString());
   });
   tx();
 
@@ -211,6 +243,17 @@ router.delete('/:id/parts/:partId', (req, res) => {
 router.post('/:id/complete', (req, res) => {
   const { id } = req.params;
   const { laborFee } = req.body;
+
+  const existing = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id) as any;
+  if (!existing) {
+    res.status(404).json({ error: '维修单不存在' });
+    return;
+  }
+
+  if (existing.status !== 'ready') {
+    res.status(400).json({ error: '只有待取件状态才能完成结算' });
+    return;
+  }
 
   const parts = getPartsForRepair(Number(id));
   const partsTotal = parts.reduce((sum, p) => sum + p.quantity * p.unitPrice, 0);
@@ -225,6 +268,51 @@ router.post('/:id/complete', (req, res) => {
 
   const row = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
   res.json(mapRowToRepairOrder(row));
+});
+
+router.get('/:id/communications', (req, res) => {
+  const { id } = req.params;
+  const repair = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
+  if (!repair) {
+    res.status(404).json({ error: '维修单不存在' });
+    return;
+  }
+  const logs = db.prepare('SELECT * FROM communication_logs WHERE repairId = ? ORDER BY createdAt DESC').all(id);
+  res.json(logs);
+});
+
+router.post('/:id/communications', (req, res) => {
+  const { id } = req.params;
+  const { type, content } = req.body;
+
+  const repair = db.prepare('SELECT * FROM repair_orders WHERE id = ?').get(id);
+  if (!repair) {
+    res.status(404).json({ error: '维修单不存在' });
+    return;
+  }
+
+  if (!type || !content) {
+    res.status(400).json({ error: '请填写沟通类型和内容' });
+    return;
+  }
+
+  const info = db
+    .prepare('INSERT INTO communication_logs (repairId, type, content, createdAt) VALUES (?, ?, ?, ?)')
+    .run(id, type, content, new Date().toISOString());
+
+  const log = db.prepare('SELECT * FROM communication_logs WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json(log);
+});
+
+router.delete('/:id/communications/:logId', (req, res) => {
+  const { id, logId } = req.params;
+  const log = db.prepare('SELECT * FROM communication_logs WHERE id = ? AND repairId = ?').get(logId, id);
+  if (!log) {
+    res.status(404).json({ error: '记录不存在' });
+    return;
+  }
+  db.prepare('DELETE FROM communication_logs WHERE id = ?').run(logId);
+  res.json({ success: true });
 });
 
 export default router;
