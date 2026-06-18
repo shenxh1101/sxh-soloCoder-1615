@@ -21,8 +21,17 @@ import {
   Shield,
   RotateCcw,
   Calendar,
+  DollarSign,
+  X,
 } from "lucide-react";
-import type { RepairOrder, RepairStatus, Part, CommunicationType, PaymentMethod } from "~shared/types";
+import type {
+  RepairOrder,
+  RepairStatus,
+  Part,
+  CommunicationType,
+  PaymentMethod,
+  RepairPayment,
+} from "~shared/types";
 import {
   STATUS_LABELS,
   STATUS_COLORS,
@@ -59,6 +68,12 @@ const paymentOptions: { value: PaymentMethod; label: string }[] = [
   { value: "unpaid", label: "未付款" },
 ];
 
+const payMethodOptions: { value: PaymentMethod; label: string }[] = [
+  { value: "cash", label: "现金" },
+  { value: "wechat", label: "微信" },
+  { value: "alipay", label: "支付宝" },
+];
+
 export default function RepairDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -75,6 +90,10 @@ export default function RepairDetail() {
   const [showReceipt, setShowReceipt] = useState(false);
   const [warrantyInput, setWarrantyInput] = useState("");
   const [relatedRepairInput, setRelatedRepairInput] = useState("");
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [payAmount, setPayAmount] = useState(0);
+  const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
+  const [payRemark, setPayRemark] = useState("");
 
   useEffect(() => {
     if (id) loadData();
@@ -122,6 +141,10 @@ export default function RepairDetail() {
     repair.status === "ready" && repair.readyAt && isOverdue(repair.readyAt) > 3;
 
   const canStartRepair = repair.customerConfirmed && repair.repairPlan && repair.quotedPrice;
+  const payments = (repair.payments || []) as RepairPayment[];
+  const paidAmount = payments.reduce((s, p) => s + Number(p.amount), 0);
+  const unpaidAmount = (repair.totalAmount || 0) - paidAmount;
+  const isWarrantyExpired = repair.warrantyExpires && new Date(repair.warrantyExpires) < new Date();
 
   async function handleStatusChange(newStatus: RepairStatus) {
     if (!id) return;
@@ -134,7 +157,14 @@ export default function RepairDetail() {
   }
 
   async function handleAddPart() {
-    if (!id || !selectedPartId) return;
+    if (!id || !selectedPartId) {
+      alert("请选择要添加的零件");
+      return;
+    }
+    if (partQuantity <= 0) {
+      alert("零件数量必须大于 0");
+      return;
+    }
     try {
       const updated = await repairsApi.addPart(Number(id), Number(selectedPartId), partQuantity);
       setRepair(updated);
@@ -162,6 +192,10 @@ export default function RepairDetail() {
       const data: any = { ...editForm };
       if (data.warrantyExpires === "") data.warrantyExpires = null;
       if (data.relatedRepairId === "" || data.relatedRepairId === undefined) data.relatedRepairId = null;
+      if (data.quotedPrice !== undefined && data.quotedPrice < 0) {
+        alert("报价不能为负数");
+        return;
+      }
       const updated = await repairsApi.update(Number(id), data);
       setRepair(updated);
       setEditMode(false);
@@ -172,6 +206,10 @@ export default function RepairDetail() {
 
   async function handleSaveLaborFee() {
     if (!id) return;
+    if (laborFeeInput < 0) {
+      alert("工时费不能为负数");
+      return;
+    }
     try {
       const updated = await repairsApi.update(Number(id), { laborFee: laborFeeInput });
       setRepair(updated);
@@ -194,7 +232,10 @@ export default function RepairDetail() {
   }
 
   async function handleAddCommunication() {
-    if (!id || !newCommContent.trim()) return;
+    if (!id || !newCommContent.trim()) {
+      alert("请输入沟通内容");
+      return;
+    }
     try {
       await repairsApi.addCommunication(Number(id), newCommType, newCommContent.trim());
       const updated = await repairsApi.get(Number(id));
@@ -230,13 +271,32 @@ export default function RepairDetail() {
     }
   }
 
+  async function handleSubmitPayment() {
+    if (!id) return;
+    if (!payAmount || payAmount <= 0) {
+      alert("收款金额必须大于 0");
+      return;
+    }
+    if (!payMethod || payMethod === "unpaid") {
+      alert("请选择收款方式");
+      return;
+    }
+    try {
+      const updated = await repairsApi.pay(Number(id), payAmount, payMethod, payRemark || undefined);
+      setRepair(updated);
+      setShowPayModal(false);
+      setPayAmount(0);
+      setPayRemark("");
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
   const availableParts = allParts.filter(
     (p) => p.stock > 0 && !repair.partsUsed.find((ru) => ru.partId === p.id)
   );
 
   const communications = repair.communications || [];
-
-  const isWarrantyExpired = repair.warrantyExpires && new Date(repair.warrantyExpires) < new Date();
 
   return (
     <div className="space-y-6">
@@ -497,6 +557,7 @@ export default function RepairDetail() {
                     <label className="label">报价金额 (¥)</label>
                     <input
                       type="number"
+                      min={0}
                       value={editForm.quotedPrice}
                       onChange={(e) =>
                         setEditForm({ ...editForm, quotedPrice: Number(e.target.value) })
@@ -793,22 +854,36 @@ export default function RepairDetail() {
                   {repair.status === "ready" ? "总金额" : repair.status === "completed" ? "总金额" : "预估金额"}
                 </span>
                 <span className="text-2xl font-bold text-primary-600">
-                  {formatCurrency(partsTotal + laborFeeInput)}
+                  {formatCurrency(partsTotal + (repair.status === "ready" || repair.status === "repairing" ? laborFeeInput : repair.laborFee))}
                 </span>
               </div>
-              {repair.status === "completed" && repair.paymentMethod && (
-                <div className="flex items-center justify-between text-sm pt-2">
-                  <span className="text-gray-500">付款方式</span>
-                  <span className={`badge ${PAYMENT_METHOD_COLORS[repair.paymentMethod]}`}>
-                    {PAYMENT_METHOD_LABELS[repair.paymentMethod]}
-                  </span>
-                </div>
+              {repair.status === "completed" && (
+                <>
+                  <div className="flex items-center justify-between text-sm pt-2">
+                    <span className="text-gray-500">已收款</span>
+                    <span className="text-green-700 font-medium">{formatCurrency(paidAmount)}</span>
+                  </div>
+                  {unpaidAmount > 0 && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-500">待收款</span>
+                      <span className="text-red-600 font-medium">{formatCurrency(unpaidAmount)}</span>
+                    </div>
+                  )}
+                  {repair.paymentMethod && (
+                    <div className="flex items-center justify-between text-sm pt-2">
+                      <span className="text-gray-500">付款方式</span>
+                      <span className={`badge ${PAYMENT_METHOD_COLORS[repair.paymentMethod]}`}>
+                        {PAYMENT_METHOD_LABELS[repair.paymentMethod]}
+                      </span>
+                    </div>
+                  )}
+                </>
               )}
               {repair.paid ? (
                 <div className="flex items-center justify-center gap-2 py-3 bg-green-50 rounded-lg text-green-700">
                   <CheckCircle className="w-5 h-5" />
                   <span className="font-medium">已收款</span>
-                  {repair.paymentMethod && (
+                  {repair.paymentMethod && repair.paymentMethod !== "unpaid" && (
                     <span className="text-sm">({PAYMENT_METHOD_LABELS[repair.paymentMethod]})</span>
                   )}
                 </div>
@@ -837,11 +912,41 @@ export default function RepairDetail() {
                     完成结算收款
                   </button>
                 </div>
+              ) : repair.status === "completed" && !repair.paid ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-center gap-2 py-3 bg-red-50 rounded-lg text-red-700">
+                    <DollarSign className="w-5 h-5" />
+                    <span className="font-medium">待收款 {formatCurrency(unpaidAmount || repair.totalAmount || 0)}</span>
+                  </div>
+                  <button onClick={() => {
+                    setPayAmount(unpaidAmount || repair.totalAmount || 0);
+                    setShowPayModal(true);
+                  }} className="btn-primary w-full">
+                    <DollarSign className="w-4 h-4" />
+                    登记收款
+                  </button>
+                </div>
               ) : repair.status === "repairing" ? (
                 <div className="text-xs text-gray-400 text-center py-2">
                   维修中仅显示预估费用，完成维修后进入待取件再结算
                 </div>
               ) : null}
+              {payments.length > 0 && (
+                <div className="pt-3 border-t border-gray-100 space-y-2">
+                  <div className="text-xs font-medium text-gray-500">收款记录</div>
+                  {payments.map((p) => (
+                    <div key={p.id} className="flex justify-between items-center text-sm py-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`badge text-xs py-0.5 ${PAYMENT_METHOD_COLORS[p.method]}`}>
+                          {PAYMENT_METHOD_LABELS[p.method]}
+                        </span>
+                        <span className="text-xs text-gray-400">{formatDate(p.createdAt)}</span>
+                      </div>
+                      <span className="font-medium text-green-700">+{formatCurrency(p.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1017,6 +1122,69 @@ export default function RepairDetail() {
           )}
         </div>
       </div>
+
+      {showPayModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">登记收款</h3>
+              <button onClick={() => setShowPayModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="label">收款金额 (¥)</label>
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(Number(e.target.value))}
+                  className="input text-lg"
+                />
+              </div>
+              <div>
+                <label className="label">收款方式</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {payMethodOptions.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setPayMethod(opt.value)}
+                      className={`py-2 px-3 text-sm rounded-lg border transition-all ${
+                        payMethod === opt.value
+                          ? "border-primary-500 bg-primary-50 text-primary-700 font-medium"
+                          : "border-gray-200 text-gray-600 hover:border-gray-300"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="label">备注（可选）</label>
+                <input
+                  type="text"
+                  value={payRemark}
+                  onChange={(e) => setPayRemark(e.target.value)}
+                  placeholder="如：补收尾款、部分收款等"
+                  className="input"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowPayModal(false)} className="btn-secondary flex-1">
+                  取消
+                </button>
+                <button onClick={handleSubmitPayment} className="btn-primary flex-1">
+                  <DollarSign className="w-4 h-4" />
+                  确认收款
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

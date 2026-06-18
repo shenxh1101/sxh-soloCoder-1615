@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, ShoppingCart, CheckCircle, XCircle, Search, Package, Truck, X, AlertTriangle } from "lucide-react";
-import type { Part, PurchaseOrder } from "~shared/types";
+import { Plus, ShoppingCart, CheckCircle, XCircle, Search, Package, Truck, X, AlertTriangle, DollarSign, Users } from "lucide-react";
+import type { Part, PurchaseOrder, Supplier } from "~shared/types";
 import { PURCHASE_STATUS_LABELS, PURCHASE_STATUS_COLORS } from "~shared/types";
-import { purchasesApi, partsApi } from "@/lib/api";
+import { purchasesApi, partsApi, suppliersApi } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 type TabType = "list" | "create";
@@ -12,7 +12,9 @@ export default function PurchaseOrders() {
   const [tab, setTab] = useState<TabType>("list");
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [allParts, setAllParts] = useState<Part[]>([]);
-  const [supplier, setSupplier] = useState("");
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [supplierId, setSupplierId] = useState<number | "">("");
+  const [supplierText, setSupplierText] = useState("");
   const [poRemark, setPoRemark] = useState("");
   const [selectedItems, setSelectedItems] = useState<{ partId: number; quantity: number; unitPrice: number }[]>([]);
   const [addPartId, setAddPartId] = useState<number | "">("");
@@ -23,12 +25,14 @@ export default function PurchaseOrders() {
 
   async function loadData() {
     try {
-      const [orderData, partsData] = await Promise.all([
+      const [orderData, partsData, supplierData] = await Promise.all([
         purchasesApi.list(),
         partsApi.list(),
+        suppliersApi.list(),
       ]);
       setOrders(orderData);
       setAllParts(partsData);
+      setSuppliers(supplierData);
     } catch (e) {
       console.error(e);
     }
@@ -48,21 +52,35 @@ export default function PurchaseOrders() {
   }
 
   function updateItemQty(partId: number, quantity: number) {
+    if (quantity < 1) quantity = 1;
     setSelectedItems(selectedItems.map((i) => i.partId === partId ? { ...i, quantity } : i));
   }
 
   function updateItemPrice(partId: number, unitPrice: number) {
+    if (unitPrice < 0) unitPrice = 0;
     setSelectedItems(selectedItems.map((i) => i.partId === partId ? { ...i, unitPrice } : i));
   }
 
   async function handleCreate() {
-    if (!supplier || selectedItems.length === 0) {
-      alert("请填写供应商和选择采购零件");
+    const finalSupplier = supplierId ? suppliers.find((s) => s.id === supplierId)?.name : supplierText;
+    if (!finalSupplier || selectedItems.length === 0) {
+      alert("请填写/选择供应商并选择采购零件");
       return;
     }
+    for (const item of selectedItems) {
+      if (!item.partId) { alert("请选择要采购的零件"); return; }
+      if (item.quantity <= 0) { alert("采购数量必须大于 0"); return; }
+      if (item.unitPrice < 0) { alert("采购进价不能为负数"); return; }
+    }
     try {
-      await purchasesApi.create({ supplier, remark: poRemark || undefined, items: selectedItems });
-      setSupplier("");
+      await purchasesApi.create({
+        supplier: finalSupplier,
+        supplierId: supplierId ? Number(supplierId) : undefined,
+        remark: poRemark || undefined,
+        items: selectedItems,
+      });
+      setSupplierId("");
+      setSupplierText("");
       setPoRemark("");
       setSelectedItems([]);
       setTab("list");
@@ -92,6 +110,16 @@ export default function PurchaseOrders() {
     }
   }
 
+  async function handlePay(id: number) {
+    if (!confirm("确认标记该采购单为已付款？")) return;
+    try {
+      await purchasesApi.pay(id);
+      loadData();
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
   function addLowStockParts() {
     const lowStock = allParts.filter((p) => p.stock <= p.safetyStock);
     const newItems = lowStock
@@ -115,6 +143,10 @@ export default function PurchaseOrders() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">采购管理</h1>
         <div className="flex items-center gap-3">
+          <Link to="/suppliers" className="btn-secondary">
+            <Users className="w-4 h-4" />
+            供应商管理
+          </Link>
           <Link to="/inventory" className="btn-secondary">
             <Package className="w-4 h-4" />
             返回库存
@@ -145,6 +177,17 @@ export default function PurchaseOrders() {
                     <span className={`badge ${PURCHASE_STATUS_COLORS[order.status]}`}>
                       {PURCHASE_STATUS_LABELS[order.status]}
                     </span>
+                    {order.isPaid ? (
+                      <span className="badge bg-green-100 text-green-700">
+                        <CheckCircle className="w-3 h-3 mr-0.5" />
+                        已付款
+                      </span>
+                    ) : (
+                      <span className="badge bg-red-100 text-red-700">
+                        <DollarSign className="w-3 h-3 mr-0.5" />
+                        未付款
+                      </span>
+                    )}
                   </div>
                   <div className="text-sm text-gray-500">
                     创建时间：{formatDate(order.createdAt, "long")}
@@ -169,6 +212,12 @@ export default function PurchaseOrders() {
                     <div>
                       <span className="text-gray-500">到货时间：</span>
                       <span className="text-gray-900">{formatDate(order.arrivedAt, "long")}</span>
+                    </div>
+                  )}
+                  {order.paidAt && (
+                    <div>
+                      <span className="text-gray-500">付款时间：</span>
+                      <span className="text-gray-900">{formatDate(order.paidAt, "long")}</span>
                     </div>
                   )}
                 </div>
@@ -198,22 +247,32 @@ export default function PurchaseOrders() {
                     </table>
                   </div>
                 )}
-                {order.status === "pending" && (
-                  <div className="flex justify-end gap-2">
+                <div className="flex justify-end gap-2">
+                  {order.status === "pending" && (
+                    <>
+                      <button
+                        onClick={() => handleCancel(order.id)}
+                        className="btn-danger text-sm py-1.5 px-4"
+                      >
+                        <XCircle className="w-3.5 h-3.5" /> 取消
+                      </button>
+                      <button
+                        onClick={() => handleConfirm(order.id)}
+                        className="btn-primary text-sm py-1.5 px-4"
+                      >
+                        <Truck className="w-3.5 h-3.5" /> 确认到货入库
+                      </button>
+                    </>
+                  )}
+                  {!order.isPaid && order.status !== "cancelled" && (
                     <button
-                      onClick={() => handleCancel(order.id)}
-                      className="btn-danger text-sm py-1.5 px-4"
-                    >
-                      <XCircle className="w-3.5 h-3.5" /> 取消
-                    </button>
-                    <button
-                      onClick={() => handleConfirm(order.id)}
+                      onClick={() => handlePay(order.id)}
                       className="btn-primary text-sm py-1.5 px-4"
                     >
-                      <Truck className="w-3.5 h-3.5" /> 确认到货入库
+                      <DollarSign className="w-3.5 h-3.5" /> 标记已付款
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             ))
           )}
@@ -225,14 +284,34 @@ export default function PurchaseOrders() {
           <h3 className="font-semibold text-gray-900 mb-4">新建采购单</h3>
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div>
-              <label className="label">供应商</label>
-              <input
-                type="text"
-                value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
+              <label className="label">选择供应商（可选）</label>
+              <select
+                value={supplierId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v) {
+                    setSupplierId(Number(v));
+                    setSupplierText("");
+                  } else {
+                    setSupplierId("");
+                  }
+                }}
                 className="input"
-                placeholder="输入供应商名称"
-              />
+              >
+                <option value="">— 不选 / 手动输入 —</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}{s.contactPhone ? ` (${s.contactPhone})` : ""}</option>
+                ))}
+              </select>
+              {!supplierId && (
+                <input
+                  type="text"
+                  value={supplierText}
+                  onChange={(e) => setSupplierText(e.target.value)}
+                  className="input mt-2"
+                  placeholder="或手动输入供应商名称"
+                />
+              )}
             </div>
             <div>
               <label className="label">备注（可选）</label>
@@ -298,7 +377,7 @@ export default function PurchaseOrders() {
                               type="number"
                               min={1}
                               value={item.quantity}
-                              onChange={(e) => updateItemQty(item.partId, Math.max(1, Number(e.target.value)))}
+                              onChange={(e) => updateItemQty(item.partId, Number(e.target.value))}
                               className="input w-20 py-1 text-center text-sm"
                             />
                           </td>
@@ -344,7 +423,7 @@ export default function PurchaseOrders() {
             <button onClick={() => setTab("list")} className="btn-secondary">取消</button>
             <button
               onClick={handleCreate}
-              disabled={!supplier || selectedItems.length === 0}
+              disabled={!supplierId && !supplierText || selectedItems.length === 0}
               className="btn-primary"
             >
               <ShoppingCart className="w-4 h-4" />

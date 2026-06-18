@@ -49,11 +49,31 @@ router.get('/:id/transactions', (req, res) => {
 
 router.post('/', (req, res) => {
   const { name, model, category, stock, safetyStock, unitPrice } = req.body;
+  if (!name || !name.trim()) {
+    res.status(400).json({ error: '零件名称不能为空' });
+    return;
+  }
+  if (!model || !model.trim()) {
+    res.status(400).json({ error: '零件型号不能为空' });
+    return;
+  }
+  if (stock !== undefined && stock < 0) {
+    res.status(400).json({ error: '初始库存不能为负数' });
+    return;
+  }
+  if (safetyStock !== undefined && safetyStock < 0) {
+    res.status(400).json({ error: '安全库存不能为负数' });
+    return;
+  }
+  if (unitPrice !== undefined && unitPrice < 0) {
+    res.status(400).json({ error: '单价不能为负数' });
+    return;
+  }
   const info = db
     .prepare(
       'INSERT INTO parts (name, model, category, stock, safetyStock, unitPrice, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(name, model, category || '', stock || 0, safetyStock || 5, unitPrice || 0, new Date().toISOString());
+    .run(name.trim(), model.trim(), category || '', stock || 0, safetyStock || 5, unitPrice || 0, new Date().toISOString());
   const row = db.prepare('SELECT * FROM parts WHERE id = ?').get(info.lastInsertRowid);
 
   if ((stock || 0) > 0) {
@@ -77,6 +97,10 @@ router.put('/:id', (req, res) => {
   const values: any[] = [];
   for (const f of fields) {
     if (req.body[f] !== undefined) {
+      if ((f === 'safetyStock' || f === 'unitPrice') && typeof req.body[f] === 'number' && req.body[f] < 0) {
+        res.status(400).json({ error: `${f === 'safetyStock' ? '安全库存' : '单价'}不能为负数` });
+        return;
+      }
       updates.push(`${f} = ?`);
       values.push(req.body[f]);
     }
@@ -95,6 +119,10 @@ router.post('/:id/stock', (req, res) => {
   const existing = db.prepare('SELECT * FROM parts WHERE id = ?').get(id) as any;
   if (!existing) {
     res.status(404).json({ error: '零件不存在' });
+    return;
+  }
+  if (!quantity || quantity <= 0) {
+    res.status(400).json({ error: '入库数量必须大于 0' });
     return;
   }
 

@@ -57,14 +57,36 @@ export interface PurchaseOrderItem {
   unitPrice: number;
 }
 
+export interface Supplier {
+  id: number;
+  name: string;
+  contactPhone?: string;
+  contactName?: string;
+  commonParts?: string;
+  remark?: string;
+  createdAt: string;
+}
+
+export interface RepairPayment {
+  id: number;
+  repairId: number;
+  amount: number;
+  method: PaymentMethod;
+  remark?: string;
+  createdAt: string;
+}
+
 export interface PurchaseOrder {
   id: number;
   supplier: string;
+  supplierId?: number;
   status: PurchaseOrderStatus;
   totalAmount: number;
+  isPaid: boolean;
   remark?: string;
   createdAt: string;
   arrivedAt?: string;
+  paidAt?: string;
   items: PurchaseOrderItem[];
 }
 
@@ -92,6 +114,7 @@ export interface RepairOrder {
   relatedRepairId?: number;
   partsUsed: RepairPart[];
   communications?: CommunicationLog[];
+  payments?: RepairPayment[];
 }
 
 export interface Part {

@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Search, Phone, Monitor, Smartphone, Laptop, HelpCircle, Filter } from "lucide-react";
-import type { RepairOrder, RepairStatus, DeviceType } from "~shared/types";
-import { STATUS_LABELS, STATUS_COLORS } from "~shared/types";
+import { Plus, Search, Phone, Monitor, Smartphone, Laptop, HelpCircle, Filter, DollarSign } from "lucide-react";
+import type { RepairOrder, RepairStatus, DeviceType, PaymentMethod } from "~shared/types";
+import { STATUS_LABELS, STATUS_COLORS, PAYMENT_METHOD_LABELS } from "~shared/types";
 import { repairsApi } from "@/lib/api";
-import { formatDate, isOverdue } from "@/lib/utils";
+import { formatDate, isOverdue, formatCurrency } from "@/lib/utils";
 
 const DeviceIcon = ({ type }: { type: DeviceType }) => {
   const cls = "w-5 h-5";
@@ -50,6 +50,10 @@ export default function RepairList() {
     { value: "completed", label: "已完成" },
     { value: "cancelled", label: "已取消" },
   ];
+
+  function getPaidAmount(repair: RepairOrder): number {
+    return (repair.payments || []).reduce((s, p) => s + Number(p.amount), 0);
+  }
 
   return (
     <div className="space-y-6">
@@ -121,6 +125,13 @@ export default function RepairList() {
             {repairs.map((repair) => {
               const isRepairOverdue =
                 repair.status === "ready" && repair.readyAt && isOverdue(repair.readyAt) > 3;
+              const paidAmount = getPaidAmount(repair);
+              const isUnpaid = repair.status === "completed" && !repair.paid;
+              const isPartial =
+                repair.status === "completed" &&
+                repair.totalAmount &&
+                paidAmount > 0 &&
+                paidAmount < repair.totalAmount;
               return (
                 <tr
                   key={repair.id}
@@ -175,21 +186,39 @@ export default function RepairList() {
                           超期 {isOverdue(repair.readyAt!)} 天
                         </span>
                       )}
+                      {isUnpaid && (
+                        <span className="badge bg-red-100 text-red-700 w-fit">
+                          <DollarSign className="w-3 h-3 mr-0.5" />
+                          应收 {formatCurrency(repair.totalAmount || 0)}
+                        </span>
+                      )}
+                      {isPartial && (
+                        <span className="badge bg-amber-100 text-amber-700 w-fit">
+                          <DollarSign className="w-3 h-3 mr-0.5" />
+                          欠 {formatCurrency((repair.totalAmount || 0) - paidAmount)}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-4">
                     {repair.totalAmount ? (
                       <div className="font-semibold text-gray-900">
-                        ¥{repair.totalAmount.toFixed(2)}
+                        {formatCurrency(repair.totalAmount)}
                       </div>
                     ) : repair.quotedPrice ? (
-                      <div className="text-gray-500">报价 ¥{repair.quotedPrice.toFixed(2)}</div>
+                      <div className="text-gray-500">报价 {formatCurrency(repair.quotedPrice)}</div>
                     ) : (
                       <div className="text-gray-400">-</div>
                     )}
-                    {repair.paid && (
-                      <span className="text-xs text-green-600 font-medium">已收款</span>
-                    )}
+                    {repair.paid ? (
+                      <span className="text-xs text-green-600 font-medium">
+                        已收款{repair.paymentMethod && repair.paymentMethod !== "unpaid"
+                          ? `（${PAYMENT_METHOD_LABELS[repair.paymentMethod as PaymentMethod]}）`
+                          : ""}
+                      </span>
+                    ) : repair.status === "completed" ? (
+                      <span className="text-xs text-red-600 font-medium">待收款</span>
+                    ) : null}
                   </td>
                   <td className="px-6 py-4 text-right">
                     <Link

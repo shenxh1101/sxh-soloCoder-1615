@@ -17,6 +17,7 @@ function getItemsForPurchase(purchaseOrderId: number) {
 function mapRowToPurchaseOrder(row: any) {
   return {
     ...row,
+    isPaid: Boolean(row.isPaid),
     items: getItemsForPurchase(row.id),
   };
 }
@@ -36,10 +37,28 @@ router.get('/:id', (req, res) => {
 });
 
 router.post('/', (req, res) => {
-  const { supplier, remark, items } = req.body;
-  if (!supplier || !items || items.length === 0) {
-    res.status(400).json({ error: '请填写供应商和采购零件' });
+  const { supplier, supplierId, remark, items } = req.body;
+  if (!supplier || !supplier.trim()) {
+    res.status(400).json({ error: '请填写或选择供应商' });
     return;
+  }
+  if (!items || items.length === 0) {
+    res.status(400).json({ error: '请至少添加一个采购零件' });
+    return;
+  }
+  for (const item of items) {
+    if (!item.partId) {
+      res.status(400).json({ error: '请选择要采购的零件' });
+      return;
+    }
+    if (!item.quantity || item.quantity <= 0) {
+      res.status(400).json({ error: '采购数量必须大于 0' });
+      return;
+    }
+    if (item.unitPrice === undefined || item.unitPrice === null || item.unitPrice < 0) {
+      res.status(400).json({ error: '采购进价不能为负数' });
+      return;
+    }
   }
 
   const tx = db.transaction(() => {
@@ -49,8 +68,8 @@ router.post('/', (req, res) => {
     }
 
     const info = db.prepare(
-      'INSERT INTO purchase_orders (supplier, status, totalAmount, remark, createdAt) VALUES (?, ?, ?, ?, ?)'
-    ).run(supplier, 'pending', totalAmount, remark || null, new Date().toISOString());
+      'INSERT INTO purchase_orders (supplier, supplierId, status, totalAmount, isPaid, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(supplier.trim(), supplierId || null, 'pending', totalAmount, 0, remark || null, new Date().toISOString());
 
     const poId = info.lastInsertRowid;
     for (const item of items) {
@@ -94,6 +113,22 @@ router.post('/:id/confirm', (req, res) => {
   });
   tx();
 
+  const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id);
+  res.json(mapRowToPurchaseOrder(row));
+});
+
+router.post('/:id/pay', (req, res) => {
+  const { id } = req.params;
+  const po = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id) as any;
+  if (!po) {
+    res.status(404).json({ error: '采购单不存在' });
+    return;
+  }
+  if (po.isPaid) {
+    res.status(400).json({ error: '该采购单已付款' });
+    return;
+  }
+  db.prepare('UPDATE purchase_orders SET isPaid = 1, paidAt = ? WHERE id = ?').run(new Date().toISOString(), id);
   const row = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(id);
   res.json(mapRowToPurchaseOrder(row));
 });

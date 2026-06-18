@@ -63,7 +63,7 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS communication_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       repairId INTEGER NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('phone', 'quote_confirm', 'pickup_notify', 'note', 'warranty', 'return_visit')),
+      type TEXT NOT NULL,
       content TEXT NOT NULL,
       createdAt TEXT NOT NULL,
       FOREIGN KEY (repairId) REFERENCES repair_orders(id)
@@ -72,7 +72,7 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS inventory_transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       partId INTEGER NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('repair_use', 'manual_in', 'repair_return', 'purchase_in')),
+      type TEXT NOT NULL,
       quantity INTEGER NOT NULL,
       repairId INTEGER,
       purchaseOrderId INTEGER,
@@ -85,11 +85,14 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS purchase_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       supplier TEXT NOT NULL,
+      supplierId INTEGER,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'arrived', 'cancelled')),
       totalAmount REAL DEFAULT 0,
+      isPaid INTEGER DEFAULT 0,
       remark TEXT,
       createdAt TEXT NOT NULL,
-      arrivedAt TEXT
+      arrivedAt TEXT,
+      paidAt TEXT
     );
 
     CREATE TABLE IF NOT EXISTS purchase_order_items (
@@ -102,6 +105,26 @@ function initDatabase() {
       FOREIGN KEY (partId) REFERENCES parts(id)
     );
 
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      contactPhone TEXT,
+      contactName TEXT,
+      commonParts TEXT,
+      remark TEXT,
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS repair_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      repairId INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      method TEXT NOT NULL CHECK(method IN ('cash', 'wechat', 'alipay')),
+      remark TEXT,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (repairId) REFERENCES repair_orders(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_repair_orders_status ON repair_orders(status);
     CREATE INDEX IF NOT EXISTS idx_repair_orders_phone ON repair_orders(customerPhone);
     CREATE INDEX IF NOT EXISTS idx_repair_parts_repair ON repair_parts(repairId);
@@ -111,6 +134,7 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_inv_trans_created ON inventory_transactions(createdAt);
     CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status);
     CREATE INDEX IF NOT EXISTS idx_purchase_order_items_order ON purchase_order_items(purchaseOrderId);
+    CREATE INDEX IF NOT EXISTS idx_repair_payments_repair ON repair_payments(repairId);
   `);
 
   const colCheck = db.prepare("SELECT count(*) as cnt FROM pragma_table_info('repair_orders') WHERE name='paymentMethod'").get() as { cnt: number };
@@ -119,35 +143,13 @@ function initDatabase() {
     db.exec(`ALTER TABLE repair_orders ADD COLUMN receipt TEXT`);
     db.exec(`ALTER TABLE repair_orders ADD COLUMN warrantyExpires TEXT`);
     db.exec(`ALTER TABLE repair_orders ADD COLUMN relatedRepairId INTEGER`);
-    try { db.exec(`DROP TABLE communication_logs`); } catch {}
-    db.exec(`
-      CREATE TABLE communication_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        repairId INTEGER NOT NULL,
-        type TEXT NOT NULL CHECK(type IN ('phone', 'quote_confirm', 'pickup_notify', 'note', 'warranty', 'return_visit')),
-        content TEXT NOT NULL,
-        createdAt TEXT NOT NULL,
-        FOREIGN KEY (repairId) REFERENCES repair_orders(id)
-      )
-    `);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_comm_logs_repair ON communication_logs(repairId)`);
-    try { db.exec(`DROP TABLE inventory_transactions`); } catch {}
-    db.exec(`
-      CREATE TABLE inventory_transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        partId INTEGER NOT NULL,
-        type TEXT NOT NULL CHECK(type IN ('repair_use', 'manual_in', 'repair_return', 'purchase_in')),
-        quantity INTEGER NOT NULL,
-        repairId INTEGER,
-        purchaseOrderId INTEGER,
-        remark TEXT,
-        createdAt TEXT NOT NULL,
-        FOREIGN KEY (partId) REFERENCES parts(id),
-        FOREIGN KEY (repairId) REFERENCES repair_orders(id)
-      )
-    `);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_inv_trans_part ON inventory_transactions(partId)`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_inv_trans_created ON inventory_transactions(createdAt)`);
+  }
+
+  const poColCheck = db.prepare("SELECT count(*) as cnt FROM pragma_table_info('purchase_orders') WHERE name='isPaid'").get() as { cnt: number };
+  if (poColCheck.cnt === 0) {
+    db.exec(`ALTER TABLE purchase_orders ADD COLUMN supplierId INTEGER`);
+    db.exec(`ALTER TABLE purchase_orders ADD COLUMN isPaid INTEGER DEFAULT 0`);
+    db.exec(`ALTER TABLE purchase_orders ADD COLUMN paidAt TEXT`);
   }
 
   const partCount = db.prepare('SELECT COUNT(*) as count FROM parts').get() as { count: number };
@@ -172,6 +174,23 @@ function initDatabase() {
       for (const p of partsData) insertPart.run(...p);
     });
     tx(parts);
+  }
+
+  const supplierCount = db.prepare('SELECT COUNT(*) as count FROM suppliers').get() as { count: number };
+  if (supplierCount.count === 0) {
+    const insertSupplier = db.prepare(
+      'INSERT INTO suppliers (name, contactPhone, contactName, commonParts, remark, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    const now = new Date().toISOString();
+    const suppliers = [
+      ['深圳电子批发商', '0755-88881234', '王经理', '内存、硬盘、主板', '长期合作，价格合理', now],
+      ['广州屏幕供应商', '020-66665678', '李总', '屏幕总成、电池', '屏幕质量好', now],
+      ['北京配件中心', '010-55559999', '张工', '电源适配器、主板', '发货快', now],
+    ];
+    const tx = db.transaction((data: unknown[][]) => {
+      for (const s of data) insertSupplier.run(...s);
+    });
+    tx(suppliers);
   }
 
   const repairCount = db.prepare('SELECT COUNT(*) as count FROM repair_orders').get() as { count: number };
@@ -253,11 +272,11 @@ function initDatabase() {
     tx4(invTxs);
 
     const insertPurchaseOrder = db.prepare(
-      'INSERT INTO purchase_orders (supplier, status, totalAmount, remark, createdAt, arrivedAt) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO purchase_orders (supplier, supplierId, status, totalAmount, isPaid, remark, createdAt, arrivedAt, paidAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     const purchaseOrders = [
-      ['深圳电子批发商', 'arrived', 1760, '首次补货', daysAgo(12), daysAgo(10)],
-      ['广州屏幕供应商', 'pending', 1700, '屏幕补货', daysAgo(1), null],
+      ['深圳电子批发商', 1, 'arrived', 1760, 1, '首次补货', daysAgo(12), daysAgo(10), daysAgo(9)],
+      ['广州屏幕供应商', 2, 'pending', 1700, 0, '屏幕补货', daysAgo(1), null, null],
     ];
     const tx5 = db.transaction((data: unknown[][]) => {
       for (const p of data) insertPurchaseOrder.run(...p);
